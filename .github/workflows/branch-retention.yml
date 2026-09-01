@@ -1,0 +1,26 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/branch-retention.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# On PR merge: most branches deleted immediately; release/* keeps last 5,
+# hotfix/* keeps last 3. master/main/badges/gh-pages never touched.
+name: 🌿 Branch Retention
+
+on:
+    pull_request:
+        types: [closed]
+        branches: [master, main, next, hotfixes]
+
+permissions:
+    contents: write
+    pull-requests: read
+
+jobs:
+    retain:
+        if: github.event.pull_request.merged == true
+        uses: CLDMV/.github/.github/workflows/reusable-branch-retention.yml@v4
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}

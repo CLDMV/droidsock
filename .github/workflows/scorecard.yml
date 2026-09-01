@@ -1,0 +1,28 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/scorecard.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# OpenSSF Scorecard — scans the repo against ~18 security best-practice checks
+# and produces a 0-10 score. Neutral-skips while private (no paid tier for
+# private-repo publishing); runs for real once droidsock goes public.
+name: 🔬 OpenSSF Scorecard
+
+on:
+    branch_protection_rule:
+    schedule:
+        - cron: "32 7 * * 1" # weekly Monday 07:32 UTC
+    push:
+        branches: [master, main]
+    workflow_dispatch:
+
+jobs:
+    analyze:
+        permissions:
+            id-token: write
+            contents: read
+            actions: read
+        uses: CLDMV/.github/.github/workflows/reusable-scorecard.yml@v4
+        with:
+            publish_results: true

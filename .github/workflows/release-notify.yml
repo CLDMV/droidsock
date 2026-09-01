@@ -1,0 +1,25 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/release-notify.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# Fires on `release: published` and dispatches the release announcement to
+# any enabled webhook. No config file — each channel is just a secret:
+#   DISCORD_RELEASES_PUBLIC_WEBHOOK   / DISCORD_RELEASES_PRIVATE_WEBHOOK
+#   SLACK_RELEASES_PUBLIC_WEBHOOK     / SLACK_RELEASES_PRIVATE_WEBHOOK
+#   GENERIC_RELEASES_PUBLIC_WEBHOOK   / GENERIC_RELEASES_PRIVATE_WEBHOOK
+name: 📣 Release Notify
+
+on:
+    release:
+        types: [published]
+
+permissions:
+    contents: read
+
+jobs:
+    notify:
+        if: github.event.release.tag_name != ''
+        uses: CLDMV/.github/.github/workflows/reusable-release-notifier.yml@v4
+        secrets: inherit

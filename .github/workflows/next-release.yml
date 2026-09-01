@@ -1,0 +1,40 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/next-release.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# v4 core: maintain the ONE persistent `next → master` release PR for this repo.
+name: 🚀 Next Release (v4)
+
+on:
+    push:
+        branches: [next]
+    workflow_dispatch: # manual kick — e.g. to open/refresh the PR for content already on `next`
+
+# Serialize: each run re-resolves the current PR state, so queueing (not
+# cancelling) avoids a create/refresh race when pushes land back-to-back.
+concurrency:
+    group: next-release-${{ github.repository }}
+    cancel-in-progress: false
+
+jobs:
+    release:
+        permissions:
+            contents: write
+            pull-requests: write
+        uses: CLDMV/.github/.github/workflows/workflow-next-release.yml@v4
+        with:
+            package_name: "@cldmv/droidsock"
+            build_command: "npm run build:ci"
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}
+            BOT_NAME: ${{ secrets.CLDMV_BOT_NAME }}
+            BOT_EMAIL: ${{ secrets.CLDMV_BOT_EMAIL }}
+            DISCORD_RELEASE_PR_PUBLIC_WEBHOOK: ${{ secrets.DISCORD_RELEASE_PR_PUBLIC_WEBHOOK }}
+            DISCORD_RELEASE_PR_PRIVATE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_PR_PRIVATE_WEBHOOK }}
+            SLACK_RELEASE_PR_PUBLIC_WEBHOOK: ${{ secrets.SLACK_RELEASE_PR_PUBLIC_WEBHOOK }}
+            SLACK_RELEASE_PR_PRIVATE_WEBHOOK: ${{ secrets.SLACK_RELEASE_PR_PRIVATE_WEBHOOK }}
+            GENERIC_RELEASE_PR_PUBLIC_WEBHOOK: ${{ secrets.GENERIC_RELEASE_PR_PUBLIC_WEBHOOK }}
+            GENERIC_RELEASE_PR_PRIVATE_WEBHOOK: ${{ secrets.GENERIC_RELEASE_PR_PRIVATE_WEBHOOK }}

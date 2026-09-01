@@ -1,0 +1,37 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/cla.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# Per-CLA-version signing with per-repo override support. Each commit author
+# must either be an org member, an exempt bot, already have a signature at
+# the active (scope, version) in the ledger repo, or reply on the PR with the
+# required text. droidsock has no root-level CLA.md, so the org-wide default
+# CLA applies.
+name: 📜 CLA
+
+on:
+    pull_request_target:
+        types: [opened, synchronize, reopened, ready_for_review]
+    issue_comment:
+        types: [created]
+
+permissions:
+    contents: read
+    pull-requests: write
+    statuses: write
+    issues: write
+
+jobs:
+    cla:
+        uses: CLDMV/.github/.github/workflows/reusable-cla.yml@v4
+        with:
+            cla_version: "1.0"
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}
+            CLA_BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_CLA_BOT_APP_CLIENT_ID }}
+            CLA_BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_CLA_BOT_APP_PRIVATE_KEY }}
+            TAGGER_NAME: ${{ secrets.CLDMV_BOT_NAME }}
+            TAGGER_EMAIL: ${{ secrets.CLDMV_BOT_EMAIL }}

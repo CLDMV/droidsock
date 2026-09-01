@@ -1,0 +1,30 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/stale.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+name: 🍂 Stale Issues & PRs
+
+on:
+    schedule:
+        - cron: "13 5 * * *" # daily 05:13 UTC (off-the-hour to avoid GH cron stampede)
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: "Preview only — no changes will be made"
+                type: boolean
+                default: false
+
+permissions:
+    issues: write
+    pull-requests: write
+
+jobs:
+    sweep:
+        uses: CLDMV/.github/.github/workflows/reusable-stale.yml@v4
+        with:
+            dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}

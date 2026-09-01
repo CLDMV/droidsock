@@ -1,0 +1,128 @@
+{
+	"name": "@cldmv/droidsock",
+	"version": "1.0.0",
+	"description": "Complete Node.js implementation of the Android Debug Bridge (ADB) protocol",
+	"main": "./index.cjs",
+	"module": "./index.mjs",
+	"types": "./types/index.d.mts",
+	"exports": {
+		".": {
+			"types": "./types/index.d.mts",
+			"import": "./index.mjs",
+			"require": "./index.cjs"
+		},
+		"./devcheck": {
+			"types": "./types/devcheck.d.mts",
+			"import": "./devcheck.mjs"
+		},
+		"./main": {
+			"droidsock-dev": {
+				"types": "./types/src/droidsock.d.mts",
+				"import": "./src/droidsock.mjs"
+			},
+			"types": "./types/dist/droidsock.d.mts",
+			"import": "./dist/droidsock.mjs"
+		}
+	},
+	"type": "module",
+	"engines": {
+		"node": ">=18.12"
+	},
+	"scripts": {
+		"build": "node build.mjs",
+		"build:types": "tsc --project .configs/tsconfig.dts.jsonc",
+		"build:ci": "npm run build && npm run build:types && npm run test:types",
+		"test": "node tests/run-vitest.mjs",
+		"test:watch": "vitest --config .configs/vitest.config.mjs",
+		"test:types": "tsc --noEmit --project .configs/tsconfig.dts.jsonc",
+		"coverage": "node tests/run-vitest.mjs --coverage-quiet",
+		"ci:coverage": "npm run coverage",
+		"lint": "eslint --config .configs/eslint.config.mjs .",
+		"lint:fix": "eslint --config .configs/eslint.config.mjs . --fix",
+		"format": "prettier --config .configs/.prettierrc --write .",
+		"format:check": "prettier --config .configs/.prettierrc --check .",
+		"fix:headers": "node tools/fix-headers.mjs",
+		"prepare": "node -e \"import('./.githooks/install.mjs').catch(()=>{})\"",
+		"precommit": "npm run build && npm run build:types && npm run test:types && npm run lint && npm run format:check && npm run test"
+	},
+	"keywords": [
+		"adb",
+		"android",
+		"debug",
+		"bridge",
+		"protocol",
+		"automation",
+		"mobile",
+		"android-tv",
+		"fire-tv",
+		"rsa",
+		"authentication",
+		"socket",
+		"tcp",
+		"nodejs",
+		"esm"
+	],
+	"author": {
+		"name": "Shinrai",
+		"company": "CLDMV",
+		"email": "git+npm@cldmv.net",
+		"url": "https://cldmv.net"
+	},
+	"contributors": [
+		{
+			"name": "CLDMV",
+			"url": "https://github.com/CLDMV"
+		}
+	],
+	"license": "Apache-2.0",
+	"funding": {
+		"type": "github",
+		"url": "https://github.com/sponsors/shinrai"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/CLDMV/droidsock.git"
+	},
+	"bugs": {
+		"url": "https://github.com/CLDMV/droidsock/issues"
+	},
+	"homepage": "https://github.com/CLDMV/droidsock#readme",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"index.mjs",
+		"index.cjs",
+		"devcheck.mjs",
+		"README.md",
+		"LICENSE",
+		"types/dist/",
+		"types/index.d.mts",
+		"types/index.d.mts.map",
+		"types/devcheck.d.mts",
+		"dist/"
+	],
+	"sideEffects": false,
+	"devDependencies": {
+		"@cldmv/eslint-plugin-jsonv": "^1.0.3",
+		"@cldmv/fix-headers": "^1.3.10",
+		"@cldmv/jsonv": "^1.0.2",
+		"@cldmv/prettier-plugin-jsonv": "^1.0.1",
+		"@cldmv/vitest-runner": "^1.2.0",
+		"@eslint/css": "^1.4.0",
+		"@eslint/js": "^10.0.1",
+		"@eslint/json": "^2.0.1",
+		"@eslint/markdown": "^8.0.3",
+		"@types/node": "^26.4.0",
+		"@vitest/coverage-v8": "^4.1.11",
+		"esbuild": "^0.28.2",
+		"eslint": "^10.9.1",
+		"globals": "^17.11.0",
+		"prettier": "^3.9.6",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.11"
+	},
+	"dependencies": {
+		"@cldmv/slothlet": "^3.15.0"
+	}
+}

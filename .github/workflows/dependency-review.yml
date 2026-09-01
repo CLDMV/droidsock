@@ -1,0 +1,28 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/dependency-review.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# PRIVATE REPOS are skipped by default (the dependency-review API needs GitHub
+# Advanced Security there): the bootstrap's `variables` phase sets
+# CLDMV_SKIP_DEPENDENCY_REVIEW. Runs for real once droidsock goes public.
+name: 🔒 Dependency Review
+
+on:
+    pull_request:
+        types: [opened, synchronize, reopened, ready_for_review]
+        branches: [master, main]
+
+permissions:
+    contents: read
+    pull-requests: write
+
+jobs:
+    review:
+        uses: CLDMV/.github/.github/workflows/reusable-dependency-review.yml@v4
+        with:
+            fail_on_severity: "moderate"
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}
