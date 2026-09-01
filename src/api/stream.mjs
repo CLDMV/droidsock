@@ -128,8 +128,11 @@ export function create(socket) {
 		closeStream(streamId) {
 			const stream = streams.get(streamId);
 			if (stream) {
-				stream.close();
-				streams.delete(streamId);
+				try {
+					stream.close();
+				} finally {
+					streams.delete(streamId);
+				}
 			}
 		}
 	};
