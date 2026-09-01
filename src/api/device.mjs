@@ -152,6 +152,42 @@ export async function connect(host, port = 5555, options = {}) {
 			return await self.files.stat(connection.socket, streamManager, remotePath);
 		},
 
+		// Reboot (real ADB `reboot:` service - see also the shell-based
+		// `device.shell("reboot")` fallback, kept for compatibility)
+		reboot: async (mode = "") => {
+			if (!device.isConnected()) {
+				throw new Error("Device not connected");
+			}
+			if (!connection.authorized) {
+				throw new Error("Device not authorized. Please accept authorization dialog.");
+			}
+			return await self.reboot.execute(connection.socket, streamManager, mode);
+		},
+
+		// Port forwarding (adb forward equivalent) - see also self.forward
+		forward: async (devicePort, forwardOptions = {}) => {
+			if (!device.isConnected()) {
+				throw new Error("Device not connected");
+			}
+			if (!connection.authorized) {
+				throw new Error("Device not authorized. Please accept authorization dialog.");
+			}
+			return await self.forward.start(connection.socket, streamManager, devicePort, forwardOptions);
+		},
+
+		// Local APK install (adb install equivalent) - currently the classic
+		// push-then-install flow; will try a streaming install first once that's
+		// implemented, falling back to this for devices that don't support it.
+		install: async (localPath, installOptions = {}) => {
+			if (!device.isConnected()) {
+				throw new Error("Device not connected");
+			}
+			if (!connection.authorized) {
+				throw new Error("Device not authorized. Please accept authorization dialog.");
+			}
+			return await self.install.classic(connection.socket, streamManager, localPath, installOptions);
+		},
+
 		// Convenience properties using self to access commands module
 		get ls() {
 			return (path = ".") => device.shell(`ls -la "${path}"`);
@@ -188,6 +224,15 @@ export async function connect(host, port = 5555, options = {}) {
 				const activityArg = activity ? `/${activity}` : "";
 				return device.shell(`am start -n ${packageName}${activityArg}`);
 			};
+		},
+		get rebootBootloader() {
+			return () => device.reboot("bootloader");
+		},
+		get rebootRecovery() {
+			return () => device.reboot("recovery");
+		},
+		get rebootSideload() {
+			return () => device.reboot("sideload");
 		}
 	};
 

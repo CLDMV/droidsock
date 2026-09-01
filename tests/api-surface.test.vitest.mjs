@@ -18,7 +18,20 @@ describe("index.mjs default export", () => {
 	test("createDroidSock() builds an API with every expected module", async () => {
 		const droidsock = await createDroidSock();
 		try {
-			for (const mod of ["auth", "config", "connection", "device", "files", "log", "shell", "stream", "utils"]) {
+			for (const mod of [
+				"auth",
+				"config",
+				"connection",
+				"device",
+				"files",
+				"forward",
+				"install",
+				"log",
+				"reboot",
+				"shell",
+				"stream",
+				"utils"
+			]) {
 				expect(droidsock[mod], `missing module: ${mod}`).toBeDefined();
 			}
 		} finally {
@@ -45,6 +58,33 @@ describe("index.mjs default export", () => {
 			expect(typeof droidsock.shell.startStreaming).toBe("function");
 			expect(typeof droidsock.shell.startInteractive).toBe("function");
 			expect(typeof droidsock.shell.commands).toBe("object");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("reboot module exposes execute", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.reboot.execute).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("forward module exposes start", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.forward.start).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("install module exposes classic", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.install.classic).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}

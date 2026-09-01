@@ -14,13 +14,24 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 > **Current status:**
 >
 > - **Shell + streaming**: Stable - command execution, interactive shells, and log/process streaming all work over the real ADB protocol.
-> - **File transfer**: `mkdir`/`remove`/`move`/`copy`/`chmod`/`diskUsage`/`find` work today via shell commands. `push`/`pull`/`list`/`stat` (the SYNC sub-protocol) are not implemented yet.
+> - **File transfer**: `mkdir`/`remove`/`move`/`copy`/`chmod`/`diskUsage`/`find`/`stat` work today via shell commands. `list` prefers a binary-safe SYNC-based implementation with automatic shell fallback.
+> - **Experimental**: `push`/`pull`/`listSync` (real ADB SYNC sub-protocol usage), `device.reboot()`, `device.forward()`, and `device.install()` are all implemented - built from the ADB protocol spec and covered by mocked unit tests - but **none of them have been run against a real device yet**. See [#1](https://github.com/CLDMV/droidsock/issues/1). Forwarding is host → device only; install is push-then-install only - see the [v1.1.0 changelog](./docs/changelog/v1/v1.1.0.md) for what's tracked separately.
 
 ---
 
 ## ✨ What's New
 
-### Latest: v1.0.0 (September 2026)
+### Latest: v1.1.0 (September 2026)
+
+- **`list`/`stat` fixed** - v1.0.0 shipped both throwing due to a dangling reference to a module that never existed in the repo.
+- **Binary-safe `list()`** - prefers the ADB SYNC `LIST` command, falls back to shell `ls -la` parsing only when SYNC isn't usable.
+- **`push`/`pull` implemented (experimental)** - real binary file transfer via the ADB SYNC sub-protocol.
+- **`device.reboot()`** (experimental) - the real ADB `reboot:` service, including bootloader/recovery/sideload modes.
+- **`device.forward()`** (experimental) - TCP port forwarding (host → device direction).
+- **`device.install()`** (experimental) - local APK install via the classic push-then-install flow.
+- [View full v1.1.0 Changelog](./docs/changelog/v1/v1.1.0.md)
+
+### Previous: v1.0.0 (September 2026)
 
 - **First stable release** - a real Vitest test suite with measured coverage, the full CLDMV v4 CI/release pipeline, a real `dist/` build, and an API surface that's been reviewed rather than just grown.
 - **Breaking**: the default export is now itself the callable quick path (`await droidsock()`); the old top-level `connect()`/`listDevices()` exports are gone.
@@ -36,7 +47,10 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 - ✅ **RSA Authentication**: Automatic key generation and ADB-specific signature/public-key formatting
 - ✅ **Stream Multiplexing**: Multiple concurrent operations over a single connection
 - ✅ **Shell Commands**: Execute commands, stream output, interactive sessions
-- ✅ **Shell-Based File Operations**: `mkdir`, `remove`, `move`, `copy`, `chmod`, `diskUsage`, `find`
+- ✅ **File Operations**: Shell-based `mkdir`/`remove`/`move`/`copy`/`chmod`/`diskUsage`/`find`, plus binary-safe SYNC-based `list`, and experimental `push`/`pull`
+- ✅ **Reboot** (experimental): Real `reboot:` service, including bootloader/recovery/sideload modes
+- ✅ **Port Forwarding** (experimental): `adb forward`-equivalent TCP tunneling (host → device)
+- ✅ **APK Install** (experimental): `adb install`-equivalent local APK installation
 - ✅ **Device Discovery**: Support for multiple devices via configuration
 - ✅ **Error Handling**: Robust error handling and connection recovery
 
@@ -98,45 +112,9 @@ Use the `references/devices.json` file to configure your devices:
 
 ## API Reference
 
-### droidsock(options)
+`droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` returns a device object exposing connection state, shell execution/streaming, file operations (`push`/`pull`/`list`/`stat`), reboot, port forwarding, and APK install.
 
-The default export, and the quick path - creates a DroidSock API instance. `options.mode` (`"eager"` or `"lazy"`, default `"eager"`), `options.context`, and `options.config` are all optional. Also available under the explicit name `createDroidSock` (`import { createDroidSock } from "@cldmv/droidsock"`) for callers who prefer it - both names are the exact same function.
-
-#### device.connect(host, port, options)
-
-- `host`: Device IP address
-- `port`: ADB port (default: 5555)
-- `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
-
-Returns a device object with the methods below.
-
-##### Connection
-
-- `isConnected()`: Check connection status
-- `disconnect()`: Disconnect from device
-
-##### Shell Commands
-
-- `shell(command, options)`: Execute shell command
-- `startStreamingShell(command, options)`: Start streaming command
-- `startInteractiveShell(command, options)`: Start interactive command
-
-##### Convenience Methods
-
-- `ls(path)`: List directory
-- `pwd()`: Get current directory
-- `getprop(property)`: Get system property
-- `getModel()`: Get device model
-- `getAndroidVersion()`: Get Android version
-- `getBattery()`: Get battery status
-- `screenshot(filename)`: Take screenshot
-- `logcat(options)`: Stream logcat
-- `top(options)`: Stream top command
-
-##### File Operations
-
-- `push(localPath, remotePath, options)`: **Not yet implemented** - throws
-- `pull(remotePath, localPath, options)`: **Not yet implemented** - throws
+📚 **See [docs/API.md](./docs/API.md) for the full method reference**, including every option and the experimental/scope caveats on `push`/`pull`/`list`/`forward`/`install`.
 
 ## Examples
 
@@ -171,46 +149,14 @@ node examples/streaming-example.mjs files
 2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature/public-key formatting
 3. **Stream Layer** (`src/api/stream.mjs`): ADB stream multiplexing (OPEN/WRTE/OKAY/CLSE)
 4. **Shell Layer** (`src/api/shell.mjs`): Command execution, streaming, and interactive shell APIs
-5. **Files Layer** (`src/api/files.mjs`): Shell-based file operations (SYNC-protocol `push`/`pull`/`list`/`stat` not yet implemented)
-6. **Device Layer** (`src/api/device.mjs`): High-level per-device API composing the layers above
-7. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
+5. **Files Layer** (`src/api/files.mjs`): Shell-based file operations, a binary-safe SYNC `LIST` implementation with automatic shell fallback, and an experimental ADB SYNC sub-protocol implementation for real binary transfer (`push`/`pull`) - not yet validated against a real device
+6. **Reboot Layer** (`src/api/reboot.mjs`): Real ADB `reboot:` service
+7. **Forward Layer** (`src/api/forward.mjs`): TCP port forwarding (host → device) via the `tcp:` service
+8. **Install Layer** (`src/api/install.mjs`): Local APK install, composed from the Files and Shell layers
+9. **Device Layer** (`src/api/device.mjs`): High-level per-device API composing the layers above
+10. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
 
-## Protocol Implementation Details
-
-### Packet Structure
-
-All ADB packets follow a 24-byte header + optional data format:
-
-- Command (4 bytes, little-endian)
-- Arg0/Arg1 (4 bytes each, little-endian)
-- Data length (4 bytes, little-endian)
-- Checksum (4 bytes, sum of data bytes)
-- Magic (4 bytes, command XOR 0xFFFFFFFF)
-
-### Authentication Flow
-
-1. Client sends CNXN packet
-2. Server responds with AUTH(TOKEN)
-3. Client signs token with RSA private key
-4. Client sends AUTH(SIGNATURE)
-5. If rejected, client sends AUTH(RSAPUBLICKEY)
-6. Server prompts user to authorize
-7. Server sends CNXN on successful auth
-
-### Stream Multiplexing
-
-- Each service (shell, sync, etc.) gets unique local/remote ID pair
-- WRTE packets carry data, OKAY packets acknowledge receipt
-- CLSE packets close streams
-- Multiple streams operate concurrently
-
-### File Transfer (SYNC)
-
-- Uses "sync:" service with sub-protocol
-- SEND/RECV commands for push/pull
-- DATA packets for file chunks
-- DONE packets signal completion
-- Not yet implemented - see [Current status](#-key-features) above
+📚 **See [docs/PROTOCOL.md](./docs/PROTOCOL.md) for wire-level protocol details** (packet structure, auth flow, SYNC sub-protocol framing, reboot/forward service usage).
 
 ## Troubleshooting
 
@@ -235,12 +181,7 @@ All ADB packets follow a 24-byte header + optional data format:
 
 ## Development
 
-The implementation is based on:
-
-- Working ADB client implementation analysis
-- Kotlin reference implementation
-- Extensive testing with real Android devices
-- ADB protocol documentation
+The implementation is built directly from the public ADB protocol documentation (AOSP `SYNC.TXT` and the wire-protocol references), cross-checked against Google's own reference client (`google/python-adb`) where the public docs are ambiguous, and covered by a mocked Vitest suite. The core connection/shell/stream-multiplexing path has real device usage behind it; the newer SYNC-protocol and service additions (`push`/`pull`/`listSync`/`reboot`/`forward`/`install`) have not yet been run against a real device - see the status note at the top of this README and [#1](https://github.com/CLDMV/droidsock/issues/1).
 
 ## License
 
