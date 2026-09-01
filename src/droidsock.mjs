@@ -1,4 +1,17 @@
 /**
+ *	@Project: @cldmv/droidsock
+ *	@Filename: /src/droidsock.mjs
+ *	@Date: 2025-11-21T15:41:06-08:00 (1763768466)
+ *	@Author: Shinrai <CLDMV>
+ *	@Email: <Shinrai@users.noreply.github.com>
+ *	-----
+ *	@Last modified by: Shinrai <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
+ *	-----
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+ */
+
+/**
  * DroidSock - Android Debug Bridge Client
  * Entry point for slothlet-based modular API
  */
@@ -23,9 +36,9 @@ export default async function createDroidSock(options = {}) {
 
 	// Create slothlet API with our api folder
 	const api = await slothlet({
-		dir: path.join(__dirname, "api"),
+		base: path.join(__dirname, "api"),
 		mode,
-		runtime: "live", // Enable live bindings for self-references
+		runtime: "async", // AsyncLocalStorage context propagation for self-references
 		context: {
 			...context
 			// Add any default context here
@@ -48,26 +61,4 @@ export default async function createDroidSock(options = {}) {
 	}
 
 	return api;
-}
-
-/**
- * Quick connection helper for common use cases
- * @param {string} host - Device host/IP
- * @param {number} [port=5555] - Device port
- * @param {Object} [options={}] - Additional options
- * @returns {Promise<Object>} Connected device instance
- */
-export async function connect(host, port = 5555, options = {}) {
-	const droidsock = await createDroidSock(options);
-	return await droidsock.device.connect(host, port);
-}
-
-/**
- * List connected devices
- * @param {Object} [options={}] - Additional options
- * @returns {Promise<Array>} List of connected devices
- */
-export async function listDevices(options = {}) {
-	const droidsock = await createDroidSock(options);
-	return await droidsock.device.list();
 }

@@ -1,14 +1,14 @@
 /**
  *	@Project: @cldmv/droidsock
  *	@Filename: /index.cjs
- *	@Date: 2025-11-21 14:04:10 -08:00
- *	@Author: Nate Hyson <CLDMV>
+ *	@Date: 2025-11-21T15:41:06-08:00 (1763768466)
+ *	@Author: Shinrai <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
- *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 16:22:18 -08:00
+ *	@Last modified by: Shinrai <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-08-30 21:00:34 -07:00 (1788148834)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 /**
@@ -23,15 +23,13 @@
 const { createRequire } = require("module");
 const requireESM = createRequire(__filename);
 
-const { default: createDroidSock, connect, listDevices } = requireESM("./index.mjs");
+const { default: droidsock } = requireESM("./index.mjs");
 
-// Export main function
-module.exports = createDroidSock; // Default export
-module.exports.createDroidSock = createDroidSock;
-module.exports.connect = connect;
-module.exports.listDevices = listDevices;
+// Export main function - the quick path, also callable with options
+module.exports = droidsock; // Default export
+module.exports.createDroidSock = droidsock;
 
 // Common DroidSock aliases
-module.exports.DroidSock = createDroidSock;
-module.exports.ADB = createDroidSock;
-module.exports.AndroidDebugBridge = createDroidSock;
+module.exports.DroidSock = droidsock;
+module.exports.ADB = droidsock;
+module.exports.AndroidDebugBridge = droidsock;

@@ -1,0 +1,30 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/pr-title-normalizer.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# Normalize contributor PR titles to Conventional Commits format, derived from
+# the highest-priority commit in the PR. The release flow expects this shape.
+name: 🏷️ PR Title Normalizer
+
+# SECURITY NOTE: pull_request_target runs in the BASE repo's context with WRITE
+# permissions and access to secrets. SAFE — the reusable's path is API-only (it
+# never checks out or executes PR content).
+on:
+    pull_request_target:
+        types: [opened, synchronize]
+
+concurrency:
+    group: pr-title-normalizer-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    normalize:
+        permissions:
+            contents: read
+            pull-requests: write
+        uses: CLDMV/.github/.github/workflows/workflow-pr-title-normalizer.yml@v4
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}

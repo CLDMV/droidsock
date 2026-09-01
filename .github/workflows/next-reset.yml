@@ -1,0 +1,30 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/next-reset.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# v4 core: after a release lands on master, re-sync the integration branches.
+#   - `hotfixes` is ALWAYS force-reset to master HEAD after any release.
+#   - `next` depends on which lane released:
+#       * normal release (next → master): force-reset `next` to master HEAD.
+#       * hotfix release (hotfixes → master): MERGE master into `next` instead,
+#         so next's accumulated feature work is preserved.
+name: ♻️ Next/Hotfixes Reset (v4)
+
+on:
+    push:
+        branches: [master, main]
+
+concurrency:
+    group: next-reset-${{ github.repository }}
+    cancel-in-progress: false
+
+jobs:
+    sync:
+        permissions:
+            contents: write
+        uses: CLDMV/.github/.github/workflows/workflow-next-reset.yml@v4
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}

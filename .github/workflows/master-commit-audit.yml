@@ -1,0 +1,27 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/master-commit-audit.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# Post-merge safety net: when any commit lands on the default branch, verify
+# its subject matches the expected release-flow patterns. On miss, auto-file a
+# GitHub Issue (deduped by SHA).
+name: 🧾 Master Commit Audit
+
+on:
+    push:
+        branches: [master, main]
+
+permissions:
+    contents: read
+    issues: write
+
+jobs:
+    audit:
+        uses: CLDMV/.github/.github/workflows/reusable-master-commit-audit.yml@v4
+        with:
+            issue_labels: "type: ci,priority: high"
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}

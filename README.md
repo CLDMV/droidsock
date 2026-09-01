@@ -1,14 +1,42 @@
 # DroidSock
 
+<div align="center">
+	<img src="https://github.com/CLDMV/droidsock/raw/HEAD/images/droidsock-banner.jpg" alt="DroidSock Banner">
+</div>
+
 A complete, from-scratch implementation of the Android Debug Bridge (ADB) protocol in Node.js. This library provides full ADB functionality including device connection, RSA authentication, shell command execution, and file transfers - eliminating clicking sounds on Android TV devices!
 
-## Features
+[![npm version]][npm_version_url] [![npm downloads]][npm_downloads_url] [![GitHub downloads]][github_downloads_url] [![Last commit]][last_commit_url] [![npm last update]][npm_last_update_url] [![coverage]][coverage_url]
 
-- ✅ **Complete ADB Protocol**: Full implementation from TCP connection to high-level APIs
-- ✅ **RSA Authentication**: Automatic key generation and ADB-specific formatting
-- ✅ **Stream Multiplexing**: Multiple concurrent operations over single connection
+[![Contributors]][contributors_url] [![Sponsor shinrai]][sponsor_url]
+
+> [!NOTE]
+> **Current status:**
+>
+> - **Shell + streaming**: Stable - command execution, interactive shells, and log/process streaming all work over the real ADB protocol.
+> - **File transfer**: `mkdir`/`remove`/`move`/`copy`/`chmod`/`diskUsage`/`find` work today via shell commands. `push`/`pull`/`list`/`stat` (the SYNC sub-protocol) are not implemented yet.
+
+---
+
+## ✨ What's New
+
+### Latest: v1.0.0 (September 2026)
+
+- **First stable release** - a real Vitest test suite with measured coverage, the full CLDMV v4 CI/release pipeline, a real `dist/` build, and an API surface that's been reviewed rather than just grown.
+- **Breaking**: the default export is now itself the callable quick path (`await droidsock()`); the old top-level `connect()`/`listDevices()` exports are gone.
+- [View full v1.0.0 Changelog](./docs/changelog/v1/v1.0.0.md)
+
+📚 **For complete version history and detailed release notes, see [docs/changelog/](./docs/changelog/) folder.**
+
+---
+
+## 🚀 Key Features
+
+- ✅ **Complete ADB Protocol**: TCP connection, CNXN/AUTH handshake, and stream multiplexing implemented from scratch
+- ✅ **RSA Authentication**: Automatic key generation and ADB-specific signature/public-key formatting
+- ✅ **Stream Multiplexing**: Multiple concurrent operations over a single connection
 - ✅ **Shell Commands**: Execute commands, stream output, interactive sessions
-- ✅ **File Transfers**: Push/pull files with SYNC protocol
+- ✅ **Shell-Based File Operations**: `mkdir`, `remove`, `move`, `copy`, `chmod`, `diskUsage`, `find`
 - ✅ **Device Discovery**: Support for multiple devices via configuration
 - ✅ **Error Handling**: Robust error handling and connection recovery
 
@@ -21,36 +49,29 @@ npm install @cldmv/droidsock
 ## Quick Start
 
 ```javascript
-import DroidSock from "@cldmv/droidsock";
+import droidsock from "@cldmv/droidsock";
 
-// Create client
-const client = new DroidSock({
-	host: "10.6.0.108", // Device IP
-	port: 5555 // ADB port
-});
+// Create the API instance
+const api = await droidsock();
 
-// Connect
-await client.connect();
+// Connect to a device
+const device = await api.device.connect("10.6.0.108", 5555);
 
-// Execute shell command
-const output = await client.shell("ls -la");
+// Execute a shell command
+const output = await device.shell("ls -la");
 console.log(output);
 
-// Get device info
-const model = await client.getModel();
-const version = await client.getAndroidVersion();
-
-// File operations
-await client.push("./local-file.txt", "/sdcard/remote-file.txt");
-await client.pull("/sdcard/remote-file.txt", "./local-file.txt");
+// Convenience getters
+const model = await device.getModel();
+const version = await device.getAndroidVersion();
 
 // Stream commands
-const logcat = client.logcat({
+const logcat = device.logcat({
 	onData: (data) => console.log(data)
 });
 
 // Clean up
-client.disconnect();
+device.disconnect();
 ```
 
 ## Device Configuration
@@ -77,23 +98,22 @@ Use the `references/devices.json` file to configure your devices:
 
 ## API Reference
 
-### DroidSock
+### droidsock(options)
 
-Main client class for ADB operations.
+The default export, and the quick path - creates a DroidSock API instance. `options.mode` (`"eager"` or `"lazy"`, default `"eager"`), `options.context`, and `options.config` are all optional. Also available under the explicit name `createDroidSock` (`import { createDroidSock } from "@cldmv/droidsock"`) for callers who prefer it - both names are the exact same function.
 
-#### Constructor Options
+#### device.connect(host, port, options)
 
 - `host`: Device IP address
 - `port`: ADB port (default: 5555)
-- `keyDir`: Directory for RSA keys (default: ~/.adb)
+- `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
 
-#### Methods
+Returns a device object with the methods below.
 
 ##### Connection
 
-- `connect()`: Connect to device
-- `disconnect()`: Disconnect from device
 - `isConnected()`: Check connection status
+- `disconnect()`: Disconnect from device
 
 ##### Shell Commands
 
@@ -115,10 +135,8 @@ Main client class for ADB operations.
 
 ##### File Operations
 
-- `push(localPath, remotePath, options)`: Push file to device
-- `pull(remotePath, localPath, options)`: Pull file from device
-- `list(remotePath)`: List directory contents
-- `stat(remotePath)`: Get file/directory stats
+- `push(localPath, remotePath, options)`: **Not yet implemented** - throws
+- `pull(remotePath, localPath, options)`: **Not yet implemented** - throws
 
 ## Examples
 
@@ -147,15 +165,15 @@ node examples/streaming-example.mjs files
 
 ## Architecture
 
-The implementation consists of several layers:
+`src/droidsock.mjs` composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
 
-1. **Packet Layer** (`packet.mjs`): Low-level ADB packet creation/parsing
-2. **Authentication Layer** (`auth.mjs`): RSA key management and ADB auth
-3. **Connection Layer** (`connection.mjs`): TCP connection and auth flow
-4. **Stream Layer** (`stream.mjs`): Service multiplexing and data flow
-5. **Shell Layer** (`shell.mjs`): Command execution APIs
-6. **SYNC Layer** (`sync.mjs`): File transfer protocol
-7. **Client Layer** (`adb.mjs`): Unified high-level API
+1. **Connection Layer** (`src/api/connection.mjs`): TCP socket + CNXN/AUTH handshake
+2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature/public-key formatting
+3. **Stream Layer** (`src/api/stream.mjs`): ADB stream multiplexing (OPEN/WRTE/OKAY/CLSE)
+4. **Shell Layer** (`src/api/shell.mjs`): Command execution, streaming, and interactive shell APIs
+5. **Files Layer** (`src/api/files.mjs`): Shell-based file operations (SYNC-protocol `push`/`pull`/`list`/`stat` not yet implemented)
+6. **Device Layer** (`src/api/device.mjs`): High-level per-device API composing the layers above
+7. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
 
 ## Protocol Implementation Details
 
@@ -192,6 +210,7 @@ All ADB packets follow a 24-byte header + optional data format:
 - SEND/RECV commands for push/pull
 - DATA packets for file chunks
 - DONE packets signal completion
+- Not yet implemented - see [Current status](#-key-features) above
 
 ## Troubleshooting
 
@@ -225,8 +244,25 @@ The implementation is based on:
 
 ## License
 
-MIT License - see package.json for details.
+Apache-2.0 - see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
 This is a complete implementation of the ADB protocol. For improvements or bug fixes, please submit issues or pull requests.
+
+[npm version]: https://img.shields.io/npm/v/%40cldmv%2Fdroidsock.svg?style=for-the-badge&logo=npm&logoColor=white&labelColor=CB3837
+[npm_version_url]: https://www.npmjs.com/package/@cldmv/droidsock
+[npm downloads]: https://img.shields.io/npm/dm/%40cldmv%2Fdroidsock.svg?style=for-the-badge&logo=npm&logoColor=white&labelColor=CB3837
+[npm_downloads_url]: https://www.npmjs.com/package/@cldmv/droidsock
+[github downloads]: https://img.shields.io/github/downloads/CLDMV/droidsock/total?style=for-the-badge&logo=github&logoColor=white&labelColor=181717
+[github_downloads_url]: https://github.com/CLDMV/droidsock/releases
+[last commit]: https://img.shields.io/github/last-commit/CLDMV/droidsock?style=for-the-badge&logo=github&logoColor=white&labelColor=181717
+[last_commit_url]: https://github.com/CLDMV/droidsock/commits
+[npm last update]: https://img.shields.io/npm/last-update/%40cldmv%2Fdroidsock?style=for-the-badge&logo=npm&logoColor=white&labelColor=CB3837
+[npm_last_update_url]: https://www.npmjs.com/package/@cldmv/droidsock
+[coverage]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FCLDMV%2Fdroidsock%2Fbadges%2Fcoverage.json&style=for-the-badge&logo=vitest&logoColor=white
+[coverage_url]: https://github.com/CLDMV/droidsock/blob/badges/coverage.json
+[contributors]: https://img.shields.io/github/contributors/CLDMV/droidsock.svg?style=for-the-badge&logo=github&logoColor=white&labelColor=181717
+[contributors_url]: https://github.com/CLDMV/droidsock/graphs/contributors
+[sponsor shinrai]: https://img.shields.io/github/sponsors/shinrai?style=for-the-badge&logo=githubsponsors&logoColor=white&labelColor=EA4AAA&label=Sponsor
+[sponsor_url]: https://github.com/sponsors/shinrai

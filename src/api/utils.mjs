@@ -6,16 +6,14 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 14:05:24 -08:00 (1763762724)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 /**
  * Utility functions API module for DroidSock
  */
-
-import { self, context } from "@cldmv/slothlet/runtime";
 
 /**
  * Parses Android property output into key-value pairs
@@ -133,14 +131,20 @@ export function delay(ms) {
  * Retries an async function with exponential backoff
  * @param {Function} fn - Async function to retry
  * @param {Object} [options={}] - Retry options
- * @param {number} [options.maxRetries=3] - Maximum number of retries
+ * @param {number} [options.maxRetries=3] - Maximum number of retries. Negative values are clamped to 0 (fn still runs once) with a console.warn.
  * @param {number} [options.baseDelay=1000] - Base delay in ms
  * @param {number} [options.maxDelay=10000] - Maximum delay in ms
  * @param {Function} [options.shouldRetry] - Function to determine if error should be retried
  * @returns {Promise<any>} Result of the function
  */
 export async function retry(fn, options = {}) {
-	const { maxRetries = 3, baseDelay = 1000, maxDelay = 10000, shouldRetry = () => true } = options;
+	const { baseDelay = 1000, maxDelay = 10000, shouldRetry = () => true } = options;
+	let { maxRetries = 3 } = options;
+
+	if (maxRetries < 0) {
+		console.warn(`retry: maxRetries must be >= 0, got ${maxRetries} - clamping to 0`);
+		maxRetries = 0;
+	}
 
 	let lastError;
 

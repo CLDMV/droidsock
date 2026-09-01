@@ -1,0 +1,54 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/dependabot.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# Dependabot configuration tuned for the v4 staging-branch release flow.
+#
+# All Dependabot PRs target `next` so they pool with every other contributor
+# change and batch into the next release. dependabot-auto-merge.yml auto-merges
+# patch/minor bumps into `next` after CI passes. Security updates are detected
+# by hotfix-redirector.yml (GHSA references in the PR body) and auto-promoted
+# from `next` → `hotfixes` so they ship via the hotfix lane instead of waiting
+# for the next-batch release.
+
+version: 2
+updates:
+    - package-ecosystem: "github-actions"
+      directory: "/"
+      target-branch: "next"
+      schedule:
+          interval: "weekly"
+      open-pull-requests-limit: 5
+      commit-message:
+          prefix: "deps"
+      groups:
+          security:
+              applies-to: security-updates
+              patterns: ["*"]
+          patch:
+              applies-to: version-updates
+              update-types: ["patch"]
+          minor:
+              applies-to: version-updates
+              update-types: ["minor"]
+
+    - package-ecosystem: "npm"
+      directory: "/"
+      target-branch: "next"
+      schedule:
+          interval: "weekly"
+      open-pull-requests-limit: 5
+      commit-message:
+          prefix: "deps"
+      groups:
+          security:
+              applies-to: security-updates
+              patterns: ["*"]
+          patch:
+              applies-to: version-updates
+              update-types: ["patch"]
+          minor:
+              applies-to: version-updates
+              update-types: ["minor"]

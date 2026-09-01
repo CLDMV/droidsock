@@ -1,14 +1,14 @@
 /**
  *	@Project: @cldmv/droidsock
  *	@Filename: /index.mjs
- *	@Date: 2025-11-21 14:04:10 -08:00
- *	@Author: Nate Hyson <CLDMV>
+ *	@Date: 2025-11-21T15:41:06-08:00 (1763768466)
+ *	@Author: Shinrai <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
- *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 14:47:33 -08:00 (1763765253)
+ *	@Last modified by: Shinrai <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-08-30 21:00:34 -07:00 (1788148834)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 // Development environment check (must happen before droidsock imports)
@@ -21,37 +21,22 @@
 })();
 
 /**
- * Creates a DroidSock instance for ADB communication
+ * Creates a DroidSock instance for ADB communication. This is the default export - the
+ * quick path - and also available under the explicit name `createDroidSock` for callers
+ * who prefer it.
  * @param {object} [options={}] - Configuration options
  * @returns {Promise<object>} DroidSock instance
  */
-export default async function createDroidSock(options = {}) {
+async function droidsock(options = {}) {
 	// Dynamic import after environment check
 	const mod = await import("@cldmv/droidsock/main");
-	const createDroidSockImpl = mod.default;
-	return await createDroidSockImpl(options);
+	return await mod.default(options);
 }
 
-/**
- * Connect to a device
- * @param {string} deviceId - Device ID to connect to
- * @returns {Promise<object>} Connected device instance
- */
-export async function connect(deviceId) {
-	const mod = await import("@cldmv/droidsock/main");
-	return mod.connect(deviceId);
-}
-
-/**
- * List available devices
- * @returns {Promise<Array>} List of available devices
- */
-export async function listDevices() {
-	const mod = await import("@cldmv/droidsock/main");
-	return mod.listDevices();
-}
+export default droidsock;
+export { droidsock as createDroidSock };
 
 // Named export aliases
-export { createDroidSock as DroidSock };
-export { createDroidSock as ADB };
-export { createDroidSock as AndroidDebugBridge };
+export { droidsock as DroidSock };
+export { droidsock as ADB };
+export { droidsock as AndroidDebugBridge };

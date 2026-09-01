@@ -1,0 +1,42 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/feature-pr.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# v4 ergonomics: auto-opens (and refreshes) a PR from a code-side branch to the
+# right integration branch on every push.
+#
+# Mapping (matches CLDMV/.github docs/conventions/branch-naming.md):
+#   feat/*, feature/*, fix/*, chore/*, refactor/*, docs/*, ci/*, test/*  → next
+#   hotfix/*                                                             → hotfixes
+name: 🔀 Feature PR (v4)
+
+on:
+    push:
+        branches:
+            - "feat/**"
+            - "feature/**"
+            - "fix/**"
+            - "chore/**"
+            - "refactor/**"
+            - "docs/**"
+            - "ci/**"
+            - "test/**"
+            - "hotfix/**"
+
+concurrency:
+    group: feature-pr-${{ github.repository }}-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    open-pr:
+        permissions:
+            contents: read
+            pull-requests: write
+        uses: CLDMV/.github/.github/workflows/workflow-feature-pr.yml@v4
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}
+            BOT_NAME: ${{ secrets.CLDMV_BOT_NAME }}
+            BOT_EMAIL: ${{ secrets.CLDMV_BOT_EMAIL }}

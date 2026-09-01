@@ -1,6 +1,6 @@
 {
 	"name": "@cldmv/droidsock",
-	"version": "0.1.0",
+	"version": "1.0.0",
 	"description": "Complete Node.js implementation of the Android Debug Bridge (ADB) protocol",
 	"main": "./index.cjs",
 	"module": "./index.mjs",
@@ -16,7 +16,7 @@
 			"import": "./devcheck.mjs"
 		},
 		"./main": {
-			"development": {
+			"droidsock-dev": {
 				"types": "./types/src/droidsock.d.mts",
 				"import": "./src/droidsock.mjs"
 			},
@@ -29,15 +29,21 @@
 		"node": ">=18.12"
 	},
 	"scripts": {
-		"test": "vitest run --config .configs/vitest.config.mjs",
-		"test:run": "vitest run",
-		"test:coverage": "vitest run --coverage",
-		"test:types": "tsc --noEmit --project .configs/tsconfig.dts.jsonc",
-		"lint": "eslint --config .configs/eslint.config.mjs .",
 		"build": "node build.mjs",
 		"build:types": "tsc --project .configs/tsconfig.dts.jsonc",
-		"build:ci": "npm run build:types && npm run test:types && npm run build",
-		"precommit": "npm run build:types && npm run test:types && npm run lint && npm run test"
+		"build:ci": "npm run build && npm run build:types && npm run test:types",
+		"test": "node tests/run-vitest.mjs",
+		"test:watch": "vitest --config .configs/vitest.config.mjs",
+		"test:types": "tsc --noEmit --project .configs/tsconfig.dts.jsonc",
+		"coverage": "node tests/run-vitest.mjs --coverage-quiet",
+		"ci:coverage": "npm run coverage",
+		"lint": "eslint --config .configs/eslint.config.mjs .",
+		"lint:fix": "eslint --config .configs/eslint.config.mjs . --fix",
+		"format": "prettier --config .configs/.prettierrc --write .",
+		"format:check": "prettier --config .configs/.prettierrc --check .",
+		"fix:headers": "node tools/fix-headers.mjs",
+		"prepare": "node -e \"import('./.githooks/install.mjs').catch(()=>{})\"",
+		"precommit": "npm run build && npm run build:types && npm run test:types && npm run lint && npm run format:check && npm run test"
 	},
 	"keywords": [
 		"adb",
@@ -98,21 +104,25 @@
 	],
 	"sideEffects": false,
 	"devDependencies": {
-		"@eslint/css": "^0.14.1",
-		"@eslint/js": "^9.39.1",
-		"@eslint/json": "^0.14.0",
-		"@eslint/markdown": "^7.5.1",
-		"@html-eslint/eslint-plugin": "^0.48.0",
-		"@html-eslint/parser": "^0.48.0",
-		"@types/node": "^20.0.0",
-		"@vitest/ui": "^4.0.8",
-		"eslint": "^9.39.1",
-		"globals": "^16.5.0",
-		"prettier": "^3.0.0",
-		"typescript": "^5.0.0",
-		"vitest": "^4.0.8"
+		"@cldmv/eslint-plugin-jsonv": "^1.0.3",
+		"@cldmv/fix-headers": "^1.3.10",
+		"@cldmv/jsonv": "^1.0.2",
+		"@cldmv/prettier-plugin-jsonv": "^1.0.1",
+		"@cldmv/vitest-runner": "^1.2.0",
+		"@eslint/css": "^1.4.0",
+		"@eslint/js": "^10.0.1",
+		"@eslint/json": "^2.0.1",
+		"@eslint/markdown": "^8.0.3",
+		"@types/node": "^26.4.0",
+		"@vitest/coverage-v8": "^4.1.11",
+		"esbuild": "^0.28.2",
+		"eslint": "^10.9.1",
+		"globals": "^17.11.0",
+		"prettier": "^3.9.6",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.11"
 	},
 	"dependencies": {
-		"@cldmv/slothlet": "^2.6.1"
+		"@cldmv/slothlet": "^3.15.0"
 	}
 }

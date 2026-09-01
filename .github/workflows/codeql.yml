@@ -1,0 +1,39 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/codeql.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# droidsock is going public as part of this onboarding; once public this scans
+# for real. While private, the bootstrap's `variables` phase sets
+# CLDMV_SKIP_CODE_SCANNING (this workflow then uploads an empty 0-alert SARIF
+# instead of analyzing) unless the repo is opted into the `scan` list in
+# data/code-scanning-skips.json in CLDMV/.github. Do NOT delete this file even
+# while skipped — the org ruleset's `code_scanning` rule still requires a
+# result, and dropping the workflow flips PRs to "waiting for results"
+# permanently.
+name: 🔍 CodeQL
+
+on:
+    push:
+        branches: [master, main]
+    pull_request:
+        types: [opened, synchronize, reopened, ready_for_review]
+        branches: [master, main, next, hotfixes]
+    schedule:
+        - cron: "37 14 * * 1" # weekly Monday 14:37 UTC
+
+permissions:
+    security-events: write
+    contents: read
+    actions: read
+
+concurrency:
+    group: codeql-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/main' }}
+
+jobs:
+    analyze:
+        uses: CLDMV/.github/.github/workflows/reusable-codeql.yml@v4
+        with:
+            languages: "javascript-typescript"

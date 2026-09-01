@@ -6,9 +6,9 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 14:50:46 -08:00 (1763765446)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 import { existsSync } from "node:fs";
@@ -34,27 +34,28 @@ const isCI = !!(
 
 if (existsSync(srcPath) && !isCI) {
 	// if (existsSync(srcPath) && !existsSync(distPath)) {
-	const nodeEnv = process.env.NODE_ENV?.toLowerCase();
-	const hasNodeOptions = process.env.NODE_OPTIONS?.includes("--conditions=development");
+	// NODE_ENV plays no part in Node's conditional-exports resolution - only the
+	// "--conditions=droidsock-dev" condition (via NODE_OPTIONS) actually routes
+	// exports["./main"] to src/ instead of dist/. NODE_ENV=development alone
+	// would previously pass this check while still resolving to dist/.
+	const hasNodeOptions = process.env.NODE_OPTIONS?.includes("--conditions=droidsock-dev");
 
-	if (!nodeEnv || (!["dev", "development"].includes(nodeEnv) && !hasNodeOptions)) {
+	if (!hasNodeOptions) {
 		console.error("❌ Development environment not properly configured!");
-		console.error("📁 Source folder detected but NODE_ENV/NODE_OPTIONS not set for development.");
+		console.error("📁 Source folder detected but NODE_OPTIONS is not set for development.");
 		console.error("");
 		console.error("🔧 To fix this, run one of these commands:");
 		console.error("   Windows (cmd):");
-		console.error("     set NODE_ENV=development");
-		console.error("     set NODE_OPTIONS=--conditions=development");
+		console.error("     set NODE_OPTIONS=--conditions=droidsock-dev");
 		console.error("");
 		console.error("   Windows (PowerShell):");
-		console.error("     $env:NODE_ENV='development'");
-		console.error("     $env:NODE_OPTIONS='--conditions=development'");
+		console.error("     $env:NODE_OPTIONS='--conditions=droidsock-dev'");
 		console.error("");
 		console.error("   Unix/Linux/macOS:");
-		console.error("     export NODE_ENV=development");
-		console.error("     export NODE_OPTIONS=--conditions=development");
+		console.error("     export NODE_OPTIONS=--conditions=droidsock-dev");
 		console.error("");
 		console.error("💡 This ensures this module loads from src/ instead of dist/ for development.");
+		console.error("   (NODE_ENV is not checked here - it has no effect on this resolution.)");
 		console.error("🚀 CI environments automatically skip this check.");
 		process.exit(1);
 	}

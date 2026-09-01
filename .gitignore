@@ -2,6 +2,9 @@
 trash/
 other_drivers/
 build/
+
+# Generated build output (tsc .d.mts emit) - rebuilt by `npm run build:types`
+types/
 build.zip
 build/zips/
 build/tmp/
@@ -151,9 +154,6 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
-
-# github data
-.github/
 
 # vscode data
 .vscode/
@@ -307,7 +307,6 @@ llm.yaml
 chains/
 crews/
 tasks/
-tools/
 graphs/
 
 # === Devin / Cognition / SmolAgent ===
@@ -369,6 +368,10 @@ gradlew.bat
 # Device config (contains operational keys)
 device-config.json
 
+# ADB RSA keypair (generated per-install by src/api/auth.mjs, never committed)
+adbkey
+adbkey.pub
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -387,5 +390,4 @@ tests/results/
 reference/
 
 # Node.js legacy (now covered above)
-package-lock.json
 yarn.lock

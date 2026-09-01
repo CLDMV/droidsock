@@ -6,16 +6,16 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 14:05:16 -08:00 (1763762716)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 /**
  * Shell command execution API module for DroidSock
  */
 
-import { self, context } from "@cldmv/slothlet/runtime";
+import { self } from "@cldmv/slothlet/runtime";
 
 /**
  * Executes a shell command and returns the output
@@ -30,7 +30,7 @@ import { self, context } from "@cldmv/slothlet/runtime";
 export async function execute(socket, streamManager, command, options = {}) {
 	const { timeout = 30000, encoding = "utf8", deviceFeatures = [] } = options;
 
-	return new Promise(async (resolve, reject) => {
+	return new Promise((resolve, reject) => {
 		try {
 			let output = Buffer.alloc(0);
 			let streamId = null;

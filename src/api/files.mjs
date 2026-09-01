@@ -6,9 +6,9 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 14:05:37 -08:00 (1763762737)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 /**
@@ -19,64 +19,53 @@ import { self } from "@cldmv/slothlet/runtime";
 
 /**
  * Pushes a file to the device
- * @param {Object} socket - ADB socket
- * @param {Object} streamManager - Stream manager instance
- * @param {string} localPath - Local file path
- * @param {string} remotePath - Remote file path on device
- * @param {Object} [options={}] - Transfer options
- * @param {Function} [options.onProgress] - Progress callback
- * @param {number} [options.mode=0o644] - File permissions
+ * @param {Object} ___socket - ADB socket
+ * @param {Object} ___streamManager - Stream manager instance
+ * @param {string} ___localPath - Local file path
+ * @param {string} ___remotePath - Remote file path on device
+ * @param {Object} [___options={}] - Transfer options
+ * @param {Function} [___options.onProgress] - Progress callback
+ * @param {number} [___options.mode=0o644] - File permissions
  * @returns {Promise<void>}
  */
-export async function push(socket, streamManager, localPath, remotePath, options = {}) {
-	// TODO: Implement file push using sync protocol
-	// For now, use basic shell command
-	const command = `cat > "${remotePath}"`;
-	const stream = await streamManager.openStream(`sync:`);
-	// Implementation needed for sync protocol
+export async function push(___socket, ___streamManager, ___localPath, ___remotePath, ___options = {}) {
 	throw new Error("File push not yet implemented in slothlet structure");
 }
 
 /**
  * Pulls a file from the device
- * @param {Object} socket - ADB socket
- * @param {Object} streamManager - Stream manager instance
- * @param {string} remotePath - Remote file path on device
- * @param {string} localPath - Local file path
- * @param {Object} [options={}] - Transfer options
- * @param {Function} [options.onProgress] - Progress callback
+ * @param {Object} ___socket - ADB socket
+ * @param {Object} ___streamManager - Stream manager instance
+ * @param {string} ___remotePath - Remote file path on device
+ * @param {string} ___localPath - Local file path
+ * @param {Object} [___options={}] - Transfer options
+ * @param {Function} [___options.onProgress] - Progress callback
  * @returns {Promise<void>}
  */
-export async function pull(socket, streamManager, remotePath, localPath, options = {}) {
-	const { AdbFileTransfer } = await import("../src.backup/sync.mjs");
-	const fileTransfer = new AdbFileTransfer(socket, streamManager);
-	return await fileTransfer.pullFile(remotePath, localPath, options);
+export async function pull(___socket, ___streamManager, ___remotePath, ___localPath, ___options = {}) {
+	throw new Error("File pull not yet implemented in slothlet structure");
 }
 
 /**
  * Lists directory contents on device
- * @param {Object} socket - ADB socket
- * @param {Object} streamManager - Stream manager instance
- * @param {string} remotePath - Remote directory path
+ * @param {Object} ___socket - ADB socket
+ * @param {Object} ___streamManager - Stream manager instance
+ * @param {string} ___remotePath - Remote directory path
  * @returns {Promise<Array>} Array of directory entries
  */
-export async function list(socket, streamManager, remotePath) {
-	const { AdbFileTransfer } = await import("../src.backup/sync.mjs");
-	const fileTransfer = new AdbFileTransfer(socket, streamManager);
-	return await fileTransfer.listDirectory(remotePath);
+export async function list(___socket, ___streamManager, ___remotePath) {
+	throw new Error("Directory listing not yet implemented in slothlet structure");
 }
 
 /**
  * Gets file/directory stats on device
- * @param {Object} socket - ADB socket
- * @param {Object} streamManager - Stream manager instance
- * @param {string} remotePath - Remote path
+ * @param {Object} ___socket - ADB socket
+ * @param {Object} ___streamManager - Stream manager instance
+ * @param {string} ___remotePath - Remote path
  * @returns {Promise<Object>} Stat information
  */
-export async function stat(socket, streamManager, remotePath) {
-	const { AdbFileTransfer } = await import("../src.backup/sync.mjs");
-	const fileTransfer = new AdbFileTransfer(socket, streamManager);
-	return await fileTransfer.stat(remotePath);
+export async function stat(___socket, ___streamManager, ___remotePath) {
+	throw new Error("File stat not yet implemented in slothlet structure");
 }
 
 /**

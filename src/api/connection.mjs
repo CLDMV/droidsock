@@ -6,18 +6,17 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 14:05:52 -08:00 (1763762752)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 /**
  * ADB Connection API module for DroidSock
  */
 
-import { self, context } from "@cldmv/slothlet/runtime";
+import { self } from "@cldmv/slothlet/runtime";
 import net from "node:net";
-import crypto from "node:crypto";
 
 // ADB Protocol Constants
 const ADB_PROTOCOL_VERSION = 0x01000000;
@@ -33,14 +32,12 @@ const MSG_OKAY = 0x59414b4f;
  * @param {Object} options - Connection options
  * @param {string} options.host - Device host/IP
  * @param {number} options.port - Device port
- * @param {string} options.publicKey - RSA public key
  * @param {string} options.privateKey - RSA private key
  * @param {string} options.adbPublicKey - ADB-formatted public key
  * @returns {Promise<Object>} Connection object
  */
 export async function create(options) {
-	const { host, port, publicKey, privateKey, adbPublicKey } = options;
-	const { config, logger } = context;
+	const { host, port, privateKey, adbPublicKey } = options;
 
 	const socket = new net.Socket();
 	const connection = {

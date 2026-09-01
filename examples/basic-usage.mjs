@@ -1,17 +1,29 @@
 /**
+ *	@Project: @cldmv/droidsock
+ *	@Filename: /examples/basic-usage.mjs
+ *	@Date: 2025-11-21T15:41:06-08:00 (1763768466)
+ *	@Author: Shinrai <CLDMV>
+ *	@Email: <Shinrai@users.noreply.github.com>
+ *	-----
+ *	@Last modified by: Shinrai <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
+ *	-----
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+ */
+
+/**
  * Basic ADB usage example
  *
  * Demonstrates connecting to a device and executing basic commands.
  */
 
-import createDroidSock from "../index.mjs";
+import droidsock from "../index.mjs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { dirname } from "path";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 
 // Helper function for delays
 function delay(ms) {
@@ -40,7 +52,7 @@ async function main() {
 		console.log(`Connecting to ${device.name} (${device.host}:${device.port})...`);
 
 		// Create DroidSock API instance
-		const droidsock = await createDroidSock({
+		const api = await droidsock({
 			config: {
 				debug: true,
 				verbose: true
@@ -48,7 +60,7 @@ async function main() {
 		});
 
 		// Connect to device
-		const deviceConnection = await droidsock.device.connect(device.host, device.port);
+		const deviceConnection = await api.device.connect(device.host, device.port);
 
 		if (!deviceConnection.isConnected()) {
 			throw new Error("Failed to connect to device");
@@ -142,8 +154,8 @@ async function main() {
 		console.log("\n✅ Disconnected from device");
 
 		// Shutdown slothlet
-		if (droidsock.shutdown) {
-			await droidsock.shutdown();
+		if (api.shutdown) {
+			await api.shutdown();
 		}
 	} catch (error) {
 		console.error("Error:", error.message);

@@ -6,9 +6,9 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2025-11-21 14:05:31 -08:00 (1763762731)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
  *	-----
- *	@Copyright: Copyright (c) 2013-2025 Catalyzed Motivation Inc. All rights reserved.
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
 /**
@@ -16,7 +16,7 @@
  * Provides configurable logging throughout the API
  */
 
-import { self, context } from "@cldmv/slothlet/runtime";
+import { self } from "@cldmv/slothlet/runtime";
 
 /**
  * Get current configuration
@@ -88,28 +88,33 @@ export function error(...args) {
  */
 export function child(context) {
 	const childPrefix = `[${getPrefix()}][${context}]`;
+	// Resolve the config module once, synchronously, while `self` is still
+	// backed by an active slothlet context. The returned closures below are
+	// plain functions called later, outside that context - `self` (and thus
+	// getConfig()) isn't resolvable there under runtime: "async"/"live".
+	const cfg = getConfig();
 
 	return {
 		debug: (...args) => {
-			if (getConfig().get("silent")) return;
-			if (!getConfig().get("debug")) return;
+			if (cfg.get("silent")) return;
+			if (!cfg.get("debug")) return;
 			console.log(`${childPrefix}[DEBUG]`, ...args);
 		},
 		verbose: (...args) => {
-			if (getConfig().get("silent")) return;
-			if (!getConfig().get("verbose") && !getConfig().get("debug")) return;
+			if (cfg.get("silent")) return;
+			if (!cfg.get("verbose") && !cfg.get("debug")) return;
 			console.log(`${childPrefix}[VERBOSE]`, ...args);
 		},
 		info: (...args) => {
-			if (getConfig().get("silent")) return;
+			if (cfg.get("silent")) return;
 			console.log(`${childPrefix}[INFO]`, ...args);
 		},
 		warn: (...args) => {
-			if (getConfig().get("silent")) return;
+			if (cfg.get("silent")) return;
 			console.warn(`${childPrefix}[WARN]`, ...args);
 		},
 		error: (...args) => {
-			if (getConfig().get("silent")) return;
+			if (cfg.get("silent")) return;
 			console.error(`${childPrefix}[ERROR]`, ...args);
 		}
 	};

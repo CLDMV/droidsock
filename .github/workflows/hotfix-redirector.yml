@@ -1,0 +1,29 @@
+#
+# @Project: @cldmv/droidsock
+# @Filename: /.github/workflows/hotfix-redirector.yml
+# @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+#
+
+# v4 hotfix lane: retarget hotfix/security PRs to the `hotfixes` branch.
+name: 🔀 Hotfix PR Redirector (v4)
+
+# SECURITY NOTE: pull_request_target runs in the BASE repo's context with WRITE
+# permissions + secrets. The reusable checks out `hotfixes` (a trusted base-repo
+# branch, NOT the PR head/fork) and only cherry-picks/pushes against it.
+on:
+    pull_request_target:
+        types: [opened]
+
+concurrency:
+    group: hotfix-redirector-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    redirect:
+        permissions:
+            contents: write
+            pull-requests: write
+        uses: CLDMV/.github/.github/workflows/workflow-hotfix-redirector.yml@v4
+        secrets:
+            BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
+            BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}

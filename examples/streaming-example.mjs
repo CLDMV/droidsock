@@ -1,31 +1,42 @@
 /**
+ *	@Project: @cldmv/droidsock
+ *	@Filename: /examples/streaming-example.mjs
+ *	@Date: 2025-11-21T15:41:06-08:00 (1763768466)
+ *	@Author: Shinrai <CLDMV>
+ *	@Email: <Shinrai@users.noreply.github.com>
+ *	-----
+ *	@Last modified by: Shinrai <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
+ *	-----
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+ */
+
+/**
  * Streaming commands example
  *
  * Demonstrates streaming commands like logcat and top.
  */
 
-import createDroidSock from "../index.mjs";
+import droidsock from "../index.mjs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { dirname } from "path";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__dirname);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function logcatExample() {
 	const devices = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "references", "devices.json"), "utf8"));
 	const device = devices[devices.default];
 
 	// Create DroidSock API instance
-	const droidsock = await createDroidSock({
+	const api = await droidsock({
 		config: {
 			debug: false, // Less noise for streaming
 			verbose: false
 		}
 	});
 
-	const deviceConnection = await droidsock.device.connect(device.host, device.port);
+	const deviceConnection = await api.device.connect(device.host, device.port);
 	console.log("✅ Connected for logcat streaming...");
 
 	// Note: Streaming functionality needs to be implemented in the shell API
@@ -48,8 +59,8 @@ async function logcatExample() {
 	setTimeout(() => {
 		console.log("\n✅ Disconnecting...");
 		deviceConnection.disconnect();
-		if (droidsock.shutdown) {
-			droidsock.shutdown();
+		if (api.shutdown) {
+			api.shutdown();
 		}
 	}, 2000);
 }
@@ -59,14 +70,14 @@ async function topExample() {
 	const device = devices[devices.default];
 
 	// Create DroidSock API instance
-	const droidsock = await createDroidSock({
+	const api = await droidsock({
 		config: {
 			debug: false,
 			verbose: false
 		}
 	});
 
-	const deviceConnection = await droidsock.device.connect(device.host, device.port);
+	const deviceConnection = await api.device.connect(device.host, device.port);
 	console.log("✅ Connected for system info...");
 
 	try {
@@ -90,8 +101,8 @@ async function topExample() {
 	setTimeout(() => {
 		console.log("\n✅ Disconnecting...");
 		deviceConnection.disconnect();
-		if (droidsock.shutdown) {
-			droidsock.shutdown();
+		if (api.shutdown) {
+			api.shutdown();
 		}
 	}, 1000);
 }
@@ -101,14 +112,14 @@ async function fileTransferExample() {
 	const device = devices[devices.default];
 
 	// Create DroidSock API instance
-	const droidsock = await createDroidSock({
+	const api = await droidsock({
 		config: {
 			debug: true,
 			verbose: false
 		}
 	});
 
-	const deviceConnection = await droidsock.device.connect(device.host, device.port);
+	const deviceConnection = await api.device.connect(device.host, device.port);
 	console.log("✅ Connected for file operations...");
 
 	try {
@@ -143,8 +154,8 @@ async function fileTransferExample() {
 
 	// Clean up
 	deviceConnection.disconnect();
-	if (droidsock.shutdown) {
-		await droidsock.shutdown();
+	if (api.shutdown) {
+		await api.shutdown();
 	}
 }
 
