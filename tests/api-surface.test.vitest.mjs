@@ -23,6 +23,7 @@ describe("index.mjs default export", () => {
 				"config",
 				"connection",
 				"device",
+				"discover",
 				"files",
 				"forward",
 				"install",
@@ -85,6 +86,16 @@ describe("index.mjs default export", () => {
 		const droidsock = await createDroidSock();
 		try {
 			expect(typeof droidsock.install.classic).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("discover module exposes subnet and mdns", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.discover.subnet).toBe("function");
+			expect(typeof droidsock.discover.mdns).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
