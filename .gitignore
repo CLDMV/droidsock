@@ -386,8 +386,8 @@ tests/results/
 *.bak
 *.swp
 
-# Reference materials
-reference/
+# Reference materials (contains real ADB RSA keypairs used for local testing - never commit)
+references/
 
 # Node.js legacy (now covered above)
 yarn.lock
