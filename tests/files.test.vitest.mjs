@@ -104,7 +104,7 @@ describe("files.mkdir", () => {
 		expect(droidsock.shell.execute).toHaveBeenCalledWith(
 			fakeSocket,
 			fakeStreamManager,
-			'mkdir -p "/sdcard/newdir" && chmod 755 "/sdcard/newdir"'
+			"mkdir -p '/sdcard/newdir' && chmod 755 '/sdcard/newdir'"
 		);
 	});
 
@@ -113,27 +113,46 @@ describe("files.mkdir", () => {
 		expect(droidsock.shell.execute).toHaveBeenCalledWith(
 			fakeSocket,
 			fakeStreamManager,
-			'mkdir -p "/sdcard/newdir" && chmod 700 "/sdcard/newdir"'
+			"mkdir -p '/sdcard/newdir' && chmod 700 '/sdcard/newdir'"
 		);
+	});
+
+	test("single-quote-escapes a path containing a single quote and shell metacharacters", async () => {
+		const maliciousPath = "/sdcard/it's a test`$(rm -rf /)`";
+		await droidsock.files.mkdir(fakeSocket, fakeStreamManager, maliciousPath);
+		const [, , command] = droidsock.shell.execute.mock.calls[0];
+		// The embedded ' closes-escapes-reopens; everything else (`, $, (, )) is
+		// inert inside single quotes, so no metacharacter reaches the shell unescaped.
+		expect(command).toBe("mkdir -p '/sdcard/it'\\''s a test`$(rm -rf /)`' && chmod 755 '/sdcard/it'\\''s a test`$(rm -rf /)`'");
 	});
 });
 
 describe("files.remove", () => {
 	test("builds a non-recursive rm by default", async () => {
 		await droidsock.files.remove(fakeSocket, fakeStreamManager, "/sdcard/file.txt");
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'rm -f "/sdcard/file.txt"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "rm -f '/sdcard/file.txt'");
 	});
 
 	test("builds a recursive rm when requested", async () => {
 		await droidsock.files.remove(fakeSocket, fakeStreamManager, "/sdcard/dir", true);
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'rm -rf "/sdcard/dir"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "rm -rf '/sdcard/dir'");
+	});
+
+	test("single-quote-escapes a path containing a single quote", async () => {
+		await droidsock.files.remove(fakeSocket, fakeStreamManager, "/sdcard/it's a file");
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "rm -f '/sdcard/it'\\''s a file'");
 	});
 });
 
 describe("files.move", () => {
 	test("builds mv with source and destination", async () => {
 		await droidsock.files.move(fakeSocket, fakeStreamManager, "/sdcard/a.txt", "/sdcard/b.txt");
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'mv "/sdcard/a.txt" "/sdcard/b.txt"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "mv '/sdcard/a.txt' '/sdcard/b.txt'");
+	});
+
+	test("single-quote-escapes source and destination independently", async () => {
+		await droidsock.files.move(fakeSocket, fakeStreamManager, "/sdcard/a's.txt", "/sdcard/$(whoami).txt");
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "mv '/sdcard/a'\\''s.txt' '/sdcard/$(whoami).txt'");
 	});
 });
 
@@ -143,12 +162,12 @@ describe("files.copy", () => {
 		const [, , command] = droidsock.shell.execute.mock.calls[0];
 		expect(command).toContain("cp");
 		expect(command).not.toContain("-r");
-		expect(command).toContain('"/sdcard/a.txt" "/sdcard/b.txt"');
+		expect(command).toContain("'/sdcard/a.txt' '/sdcard/b.txt'");
 	});
 
 	test("builds cp -r when recursive", async () => {
 		await droidsock.files.copy(fakeSocket, fakeStreamManager, "/sdcard/dir", "/sdcard/dir2", true);
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'cp -r "/sdcard/dir" "/sdcard/dir2"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "cp -r '/sdcard/dir' '/sdcard/dir2'");
 	});
 });
 
@@ -162,41 +181,50 @@ describe("files.chmod", () => {
 
 	test("builds chmod -R when recursive", async () => {
 		await droidsock.files.chmod(fakeSocket, fakeStreamManager, "/sdcard/dir", 0o755, true);
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'chmod -R 755 "/sdcard/dir"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "chmod -R 755 '/sdcard/dir'");
 	});
 });
 
 describe("files.diskUsage", () => {
 	test("defaults to checking /", async () => {
 		await droidsock.files.diskUsage(fakeSocket, fakeStreamManager);
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'df -h "/"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "df -h '/'");
 	});
 
 	test("checks a specific path", async () => {
 		await droidsock.files.diskUsage(fakeSocket, fakeStreamManager, "/sdcard");
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'df -h "/sdcard"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "df -h '/sdcard'");
 	});
 });
 
 describe("files.find", () => {
 	test("builds a basic find by name", async () => {
 		await droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt");
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'find "/sdcard" -name "*.txt"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "find '/sdcard' -name '*.txt'");
 	});
 
 	test("adds -maxdepth when given", async () => {
 		await droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt", { maxDepth: 2 });
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'find "/sdcard" -maxdepth 2 -name "*.txt"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "find '/sdcard' -maxdepth 2 -name '*.txt'");
 	});
 
 	test("adds -type when given", async () => {
 		await droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt", { type: "f" });
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'find "/sdcard" -type f -name "*.txt"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "find '/sdcard' -type f -name '*.txt'");
 	});
 
 	test("combines -maxdepth and -type", async () => {
 		await droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt", { maxDepth: 3, type: "d" });
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'find "/sdcard" -maxdepth 3 -type d -name "*.txt"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "find '/sdcard' -maxdepth 3 -type d -name '*.txt'");
+	});
+
+	test("single-quote-escapes path and pattern", async () => {
+		await droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.tar'; rm -rf /;'");
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(
+			fakeSocket,
+			fakeStreamManager,
+			"find '/sdcard' -name '*.tar'\\''; rm -rf /;'\\'''"
+		);
 	});
 });
 
@@ -416,7 +444,7 @@ describe("files.listShell", () => {
 	test("builds ls -la and parses the output into structured entries", async () => {
 		droidsock.shell.execute.mockResolvedValue("total 8\ndrwxr-xr-x 2 root root 4096 2026-01-01 sdcard\n");
 		const entries = await droidsock.files.listShell(fakeSocket, fakeStreamManager, "/sdcard");
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'ls -la "/sdcard"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "ls -la '/sdcard'");
 		expect(entries).toEqual([expect.objectContaining({ name: "sdcard", isDirectory: true })]);
 	});
 });
@@ -442,7 +470,7 @@ describe("files.list (prefers SYNC LIST, falls back to shell ls -la)", () => {
 		droidsock.shell.execute.mockResolvedValue("total 8\ndrwxr-xr-x 2 root root 4096 2026-01-01 sdcard\n");
 		// fakeStreamManager has no openStream() at all - simulates a connection state where SYNC can't be used.
 		const entries = await droidsock.files.list(fakeSocket, fakeStreamManager, "/sdcard");
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'ls -la "/sdcard"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "ls -la '/sdcard'");
 		expect(entries).toEqual([expect.objectContaining({ name: "sdcard", isDirectory: true })]);
 	});
 
@@ -467,7 +495,12 @@ describe("files.stat", () => {
 	test("builds a stat command and returns the raw output", async () => {
 		droidsock.shell.execute.mockResolvedValue("  File: /sdcard/file.txt\n  Size: 123\n");
 		const result = await droidsock.files.stat(fakeSocket, fakeStreamManager, "/sdcard/file.txt");
-		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, 'stat "/sdcard/file.txt"');
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "stat '/sdcard/file.txt'");
 		expect(result).toBe("  File: /sdcard/file.txt\n  Size: 123\n");
+	});
+
+	test("single-quote-escapes a path containing a single quote", async () => {
+		await droidsock.files.stat(fakeSocket, fakeStreamManager, "/sdcard/it's a file.txt");
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "stat '/sdcard/it'\\''s a file.txt'");
 	});
 });

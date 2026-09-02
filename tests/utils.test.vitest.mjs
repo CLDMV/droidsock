@@ -23,6 +23,7 @@ import {
 	isValidPort,
 	parseHostPort,
 	escapeShell,
+	quoteShellArg,
 	timeout,
 	withTimeout
 } from "../src/api/utils.mjs";
@@ -225,6 +226,26 @@ describe("utils.escapeShell", () => {
 
 	test("leaves ordinary strings untouched", () => {
 		expect(escapeShell("plain text")).toBe("plain text");
+	});
+});
+
+describe("utils.quoteShellArg", () => {
+	test("wraps a plain string in single quotes", () => {
+		expect(quoteShellArg("/sdcard/file.txt")).toBe("'/sdcard/file.txt'");
+	});
+
+	test("escapes an embedded single quote via close-escape-reopen", () => {
+		expect(quoteShellArg("it's a test")).toBe("'it'\\''s a test'");
+	});
+
+	test("leaves $()/backticks/double-quotes inert - they're not shell-special inside single quotes", () => {
+		const input = '$(rm -rf /) `whoami` "quoted"';
+		const quoted = quoteShellArg(input);
+		expect(quoted).toBe(`'${input}'`);
+	});
+
+	test("coerces a non-string argument to a string before quoting", () => {
+		expect(quoteShellArg(123)).toBe("'123'");
 	});
 });
 

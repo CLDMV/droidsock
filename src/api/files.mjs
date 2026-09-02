@@ -16,7 +16,7 @@
  */
 
 import { self } from "@cldmv/slothlet/runtime";
-import { parseListing } from "./utils.mjs";
+import { parseListing, quoteShellArg } from "./utils.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 
 // ADB SYNC sub-protocol (nested inside a stream opened to the "sync:"
@@ -358,7 +358,7 @@ export async function listSync(___socket, streamManager, remotePath) {
  * @returns {Promise<Array>} Array of directory entries (see utils.parseListing)
  */
 export async function listShell(socket, streamManager, remotePath) {
-	const output = await self.shell.execute(socket, streamManager, `ls -la "${remotePath}"`);
+	const output = await self.shell.execute(socket, streamManager, `ls -la ${quoteShellArg(remotePath)}`);
 	return parseListing(output);
 }
 
@@ -397,7 +397,7 @@ export async function list(socket, streamManager, remotePath) {
  * @returns {Promise<string>} Raw `stat` command output
  */
 export async function stat(socket, streamManager, remotePath) {
-	return await self.shell.execute(socket, streamManager, `stat "${remotePath}"`);
+	return await self.shell.execute(socket, streamManager, `stat ${quoteShellArg(remotePath)}`);
 }
 
 /**
@@ -410,7 +410,7 @@ export async function stat(socket, streamManager, remotePath) {
  */
 export async function mkdir(socket, streamManager, remotePath, mode = 0o755) {
 	// Use shell command to create directory
-	const command = `mkdir -p "${remotePath}" && chmod ${mode.toString(8)} "${remotePath}"`;
+	const command = `mkdir -p ${quoteShellArg(remotePath)} && chmod ${mode.toString(8)} ${quoteShellArg(remotePath)}`;
 	return await self.shell.execute(socket, streamManager, command);
 }
 
@@ -424,7 +424,7 @@ export async function mkdir(socket, streamManager, remotePath, mode = 0o755) {
  */
 export async function remove(socket, streamManager, remotePath, recursive = false) {
 	const flag = recursive ? "-rf" : "-f";
-	const command = `rm ${flag} "${remotePath}"`;
+	const command = `rm ${flag} ${quoteShellArg(remotePath)}`;
 	return await self.shell.execute(socket, streamManager, command);
 }
 
@@ -437,7 +437,7 @@ export async function remove(socket, streamManager, remotePath, recursive = fals
  * @returns {Promise<void>}
  */
 export async function move(socket, streamManager, sourcePath, destPath) {
-	const command = `mv "${sourcePath}" "${destPath}"`;
+	const command = `mv ${quoteShellArg(sourcePath)} ${quoteShellArg(destPath)}`;
 	return await self.shell.execute(socket, streamManager, command);
 }
 
@@ -452,7 +452,7 @@ export async function move(socket, streamManager, sourcePath, destPath) {
  */
 export async function copy(socket, streamManager, sourcePath, destPath, recursive = false) {
 	const flag = recursive ? "-r" : "";
-	const command = `cp ${flag} "${sourcePath}" "${destPath}"`;
+	const command = `cp ${flag} ${quoteShellArg(sourcePath)} ${quoteShellArg(destPath)}`;
 	return await self.shell.execute(socket, streamManager, command);
 }
 
@@ -467,7 +467,7 @@ export async function copy(socket, streamManager, sourcePath, destPath, recursiv
  */
 export async function chmod(socket, streamManager, remotePath, mode, recursive = false) {
 	const flag = recursive ? "-R" : "";
-	const command = `chmod ${flag} ${mode.toString(8)} "${remotePath}"`;
+	const command = `chmod ${flag} ${mode.toString(8)} ${quoteShellArg(remotePath)}`;
 	return await self.shell.execute(socket, streamManager, command);
 }
 
@@ -479,7 +479,7 @@ export async function chmod(socket, streamManager, remotePath, mode, recursive =
  * @returns {Promise<string>} Disk usage output
  */
 export async function diskUsage(socket, streamManager, path = "/") {
-	const command = `df -h "${path}"`;
+	const command = `df -h ${quoteShellArg(path)}`;
 	return await self.shell.execute(socket, streamManager, command);
 }
 
@@ -495,7 +495,7 @@ export async function diskUsage(socket, streamManager, path = "/") {
  * @returns {Promise<string>} Find results
  */
 export async function find(socket, streamManager, path, pattern, options = {}) {
-	let command = `find "${path}"`;
+	let command = `find ${quoteShellArg(path)}`;
 
 	if (options.maxDepth) {
 		command += ` -maxdepth ${options.maxDepth}`;
@@ -505,7 +505,7 @@ export async function find(socket, streamManager, path, pattern, options = {}) {
 		command += ` -type ${options.type}`;
 	}
 
-	command += ` -name "${pattern}"`;
+	command += ` -name ${quoteShellArg(pattern)}`;
 
 	return await self.shell.execute(socket, streamManager, command);
 }
