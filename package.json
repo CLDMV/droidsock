@@ -1,6 +1,6 @@
 {
 	"name": "@cldmv/droidsock",
-	"version": "1.0.0",
+	"version": "0.1.0",
 	"description": "Complete Node.js implementation of the Android Debug Bridge (ADB) protocol",
 	"main": "./index.cjs",
 	"module": "./index.mjs",
