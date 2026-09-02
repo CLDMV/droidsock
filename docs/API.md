@@ -20,7 +20,7 @@ Returns a device object with the methods below. Calling `connect()` again for th
 ### Shell Commands
 
 - `shell(command, options)`: Execute a shell command and return its output
-- `startStreamingShell(command, options)`: Start a streaming command (`options.onData`/`onError`/`onEnd`); returns a control object with `stop()`
+- `startStreamingShell(command, options)`: Start a streaming command (`options.onData` / `onError` / `onEnd`); returns a control object with `stop()`
 - `startInteractiveShell(command, options)`: Start an interactive command; returns a control object with `sendInput(data)` and `stop()`
 
 ### Convenience Methods
@@ -48,7 +48,7 @@ For direct access to one specific listing implementation (bypassing the automati
 
 ### Reboot (Experimental)
 
-- `reboot(mode)`: **Experimental** - reboots the device via the real ADB `reboot:` service - a distinct top-level service like `shell:`/`sync:`, not a shell command. `mode` is `""` (normal, default), `"bootloader"`, `"recovery"`, `"sideload"`, `"sideload-auto-reboot"`, or any other string for a vendor-specific target. Not yet validated against a real device.
+- `reboot(mode)`: **Experimental** - reboots the device via the real ADB `reboot:` service - a distinct top-level service like `shell:` / `sync:`, not a shell command. `mode` is `""` (normal, default), `"bootloader"`, `"recovery"`, `"sideload"`, `"sideload-auto-reboot"`, or any other string for a vendor-specific target. Not yet validated against a real device.
 - `rebootBootloader()` / `rebootRecovery()` / `rebootSideload()`: Shortcuts for the corresponding `reboot(mode)` call.
 
 `device.shell("reboot")` still works unchanged for a plain reboot - it's just unable to reach bootloader/recovery/sideload, since those aren't real shell commands.
