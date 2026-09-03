@@ -52,11 +52,20 @@ function getCommandName(command) {
 export function create(socket) {
 	const streams = new Map();
 	let nextStreamId = 1;
+	const emitter = new EventEmitter();
 
 	const manager = {
 		socket,
 		streams,
 		nextStreamId,
+
+		// Device-initiated streams (e.g. a `reverse:forward:` tunnel's inbound
+		// connections) aren't a response to anything droidsock opened, so
+		// there's no promise/caller already waiting on them - subscribe via
+		// on("remoteOpen", (stream, destination) => ...) instead.
+		on: (...args) => emitter.on(...args),
+		once: (...args) => emitter.once(...args),
+		off: (...args) => emitter.off(...args),
 
 		/**
 		 * Opens a new ADB stream
@@ -112,6 +121,24 @@ export function create(socket) {
 				const commandName = getCommandName(command);
 				if (self.config.get("debug")) {
 					self.log.debug(`${self.config.get("debugArrowReceived")} ${commandName} arg0:${arg0} arg1:${arg1} len:${dataLength}`);
+				}
+
+				if (command === MSG_OPEN) {
+					// Device-initiated: the far side is opening a NEW stream to us
+					// (e.g. a peer connected to a device port that's registered via
+					// `reverse:forward:`), not replying to something we opened -
+					// arg0 is the device's own stream id for it, arg1 is always 0
+					// (the device has no local id of ours to reference yet). Mint
+					// one, ack it, and hand it to whoever's listening.
+					const remoteId = arg0;
+					const destination = packetData.toString("utf8");
+					const localId = nextStreamId++;
+					const stream = new AdbStream(localId, remoteId, socket, manager);
+					stream.ready = true; // already open from our side - no OKAY to wait on
+					streams.set(localId, stream);
+					sendMessage(socket, MSG_OKAY, localId, remoteId);
+					emitter.emit("remoteOpen", stream, destination);
+					continue;
 				}
 
 				const stream = streams.get(arg1); // arg1 is local stream ID

@@ -59,8 +59,9 @@ For direct access to one specific listing implementation (bypassing the automati
   - `options.localPort` (default `0`, letting the OS pick a free port)
   - `options.host` (default `"127.0.0.1"`)
   - `options.onError(error, localSocket)`: called on a per-connection bridging error
-
-Only the `forward` direction (host → device) is implemented; `reverse` (device → host) is tracked separately in [#4](https://github.com/CLDMV/droidsock/issues/4).
+- `reverse(devicePort, hostPort, options)`: **Experimental** - the `adb reverse tcp:<devicePort> tcp:<hostPort>` equivalent. Registers the tunnel with the device (`reverse:forward:tcp:<devicePort>;tcp:<hostPort>`), then bridges each device-initiated connection to a new local TCP connection on `hostPort`. Returns `{ devicePort, hostPort, close() }` - `close()` also unregisters the tunnel via `reverse:killforward:`. Not yet validated against a real device.
+  - `options.host` (default `"127.0.0.1"`)
+  - `options.onError(error, deviceStream)`: called on a per-connection bridging error
 
 ### APK Install (Experimental)
 

@@ -1,0 +1,142 @@
+/**
+ *	@Project: @cldmv/droidsock
+ *	@Filename: /src/api/reverse.mjs
+ *	@Date: 2026-09-03 12:00:00 -07:00 (1788375600)
+ *	@Author: Nate Hyson <CLDMV>
+ *	@Email: <Shinrai@users.noreply.github.com>
+ *	-----
+ *	@Last modified by: Nate Hyson <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-09-03 12:00:00 -07:00 (1788375600)
+ *	-----
+ *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+ */
+
+/**
+ * Reverse port forwarding API module for DroidSock (adb reverse equivalent)
+ */
+
+import net from "node:net";
+
+/**
+ * Parses a classic ADB host-service ack from a `WRTE` payload - the literal
+ * 4 bytes `"OKAY"` for success, or `"FAIL"` followed by a 4-hex-digit length
+ * and a message for failure (the same convention every `host:`/`reverse:`
+ * command-response service uses). Throws with the failure message when the
+ * ack is a FAIL, or when it's neither.
+ * @param {Buffer} ack - The ack payload.
+ * @param {string} action - Human-readable description of what was being acked, for the error message.
+ * @returns {void}
+ */
+function assertOkayAck(ack, action) {
+	const text = ack.toString("utf8");
+	if (text.startsWith("OKAY")) return;
+	if (text.startsWith("FAIL")) {
+		throw new Error(`Failed to ${action}: ${text.slice(8) || text.slice(4)}`);
+	}
+	throw new Error(`Unexpected response ${action}: ${text}`);
+}
+
+/**
+ * Starts reverse port forwarding - the `adb reverse tcp:<devicePort>
+ * tcp:<hostPort>` equivalent. Registers the tunnel with the device (a normal
+ * client-initiated `reverse:forward:` stream, acked the same way every ADB
+ * host-service is), then bridges every subsequent device-initiated
+ * connection tagged for this mapping to a fresh local TCP connection.
+ * EXPERIMENTAL - built from the ADB protocol spec, not yet validated against
+ * a real device. See #1.
+ * @param {Object} ___socket - ADB socket (unused - streams are opened via streamManager)
+ * @param {Object} streamManager - Stream manager instance
+ * @param {number} devicePort - Device port to register the reverse tunnel on
+ * @param {number} hostPort - Local port to connect to for each device-initiated connection
+ * @param {Object} [options={}] - Options
+ * @param {string} [options.host="127.0.0.1"] - Local host to connect to
+ * @param {Function} [options.onError] - Called with (error, deviceStream) on a per-connection bridging error
+ * @returns {Promise<{devicePort: number, hostPort: number, close: () => Promise<void>}>} Control handle - `close()` unregisters the tunnel and stops bridging
+ */
+export async function start(___socket, streamManager, devicePort, hostPort, options = {}) {
+	const { host = "127.0.0.1", onError } = options;
+	const destination = `tcp:${hostPort}`;
+
+	// Attached before the registration round-trip completes: a compliant
+	// device could route a connection the moment it's registered, which may
+	// race the OKAY ack for the registration stream itself reaching us.
+	const onRemoteOpen = (deviceStream, streamDestination) => {
+		// Every reverse() call on this connection shares one manager-wide
+		// "remoteOpen" event - only bridge connections tagged for THIS
+		// mapping's hostPort; another reverse() call owns anything else.
+		if (streamDestination !== destination) return;
+
+		const localSocket = net.connect(hostPort, host);
+		let localSocketFailed = false;
+		localSocket.on("error", (error) => {
+			localSocketFailed = true;
+			deviceStream.close();
+			if (onError) onError(error, deviceStream);
+		});
+
+		localSocket.on("connect", () => {
+			if (localSocketFailed || deviceStream.closed) {
+				localSocket.destroy();
+				return;
+			}
+
+			deviceStream.on("data", (data) => localSocket.write(data));
+			deviceStream.on("close", () => localSocket.end());
+			deviceStream.on("error", (error) => {
+				deviceStream.close();
+				localSocket.destroy();
+				if (onError) onError(error, deviceStream);
+			});
+
+			localSocket.on("data", (data) => {
+				deviceStream.write(data).catch((error) => {
+					deviceStream.close();
+					localSocket.destroy();
+					if (onError) onError(error, deviceStream);
+				});
+			});
+			localSocket.on("close", () => deviceStream.close());
+		});
+	};
+	streamManager.on("remoteOpen", onRemoteOpen);
+
+	let registerStream;
+	try {
+		registerStream = await streamManager.openStream(`reverse:forward:tcp:${devicePort};tcp:${hostPort}`);
+		const ack = await new Promise((resolve, reject) => {
+			registerStream.once("data", resolve);
+			registerStream.once("error", reject);
+			registerStream.once("close", () => reject(new Error("reverse registration stream closed with no ack")));
+		});
+		assertOkayAck(ack, `register reverse tunnel tcp:${devicePort} -> tcp:${hostPort}`);
+	} catch (error) {
+		streamManager.off("remoteOpen", onRemoteOpen);
+		throw error;
+	} finally {
+		if (registerStream) registerStream.close();
+	}
+
+	return {
+		devicePort,
+		hostPort,
+		async close() {
+			streamManager.off("remoteOpen", onRemoteOpen);
+
+			// Best-effort: unregister the tunnel so the device stops routing
+			// connections here. A connection that's already gone (or a device
+			// that never re-acks a killforward) shouldn't block teardown.
+			try {
+				const killStream = await streamManager.openStream(`reverse:killforward:tcp:${devicePort}`);
+				const ack = await new Promise((resolve, reject) => {
+					killStream.once("data", resolve);
+					killStream.once("error", reject);
+					killStream.once("close", () => reject(new Error("reverse killforward stream closed with no ack")));
+				});
+				killStream.close();
+				assertOkayAck(ack, `unregister reverse tunnel tcp:${devicePort}`);
+			} catch {
+				// Non-fatal - see comment above.
+			}
+		}
+	};
+}
