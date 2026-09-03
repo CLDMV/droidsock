@@ -21,7 +21,13 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 
 ## ✨ What's New
 
-### Latest: v1.1.0 (September 2026)
+### Latest: v1.2.0 (September 2026)
+
+- **Device discovery** - `discover.subnet()` sweeps a CIDR range for a reachable ADB TCP port; `discover.mdns()` is a hand-written mDNS client (no dependency) for wireless-debugging-advertised devices. Both **experimental** - see [#1](https://github.com/CLDMV/droidsock/issues/1).
+- **Shell-injection fix** - every `files.*` shell-based method now single-quote-escapes remote paths before interpolation; `mkdir`/`chmod`'s mode and `find`'s `maxDepth`/`type` are validated too.
+- [View full v1.2.0 Changelog](./docs/changelog/v1/v1.2.0.md)
+
+### Previous: v1.1.0 (September 2026)
 
 - **`list` / `stat` fixed** - v1.0.0 shipped both throwing due to a dangling reference to a module that never existed in the repo.
 - **Binary-safe `list()`** - prefers the ADB SYNC `LIST` command, falls back to shell `ls -la` parsing only when SYNC isn't usable.
@@ -30,12 +36,6 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 - **`device.forward()`** (experimental) - TCP port forwarding (host → device direction).
 - **`device.install()`** (experimental) - local APK install via the classic push-then-install flow.
 - [View full v1.1.0 Changelog](./docs/changelog/v1/v1.1.0.md)
-
-### Previous: v1.0.0 (September 2026)
-
-- **First stable release** - a real Vitest test suite with measured coverage, the full CLDMV v4 CI/release pipeline, a real `dist/` build, and an API surface that's been reviewed rather than just grown.
-- **Breaking**: the default export is now itself the callable quick path (`await droidsock()`); the old top-level `connect()` / `listDevices()` exports are gone.
-- [View full v1.0.0 Changelog](./docs/changelog/v1/v1.0.0.md)
 
 📚 **For complete version history and detailed release notes, see [docs/changelog/](./docs/changelog/) folder.**
 
