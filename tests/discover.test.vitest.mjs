@@ -628,6 +628,114 @@ describe("discover.mdns", () => {
 		expect(results).toEqual([{ name: instanceName, host: "10.0.0.8", port: 5556, txt: {} }]);
 	});
 
+	test("ignores a PTR record whose declared rdlength is too small for the encoded name, without corrupting the record that follows it", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const goodInstanceName = "Good Device._adb-tls-connect._tcp.local";
+		const goodHostname = "good-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			// A PTR record whose header declares an rdlength (2 bytes) too small to
+			// hold a complete name - the rdata is just a label-length byte of 1
+			// followed by a single letter, with no terminating zero byte inside
+			// those 2 bytes. Without a bounds check, decodeDnsName() doesn't know
+			// about rdlength and keeps reading labels past it, straight into the
+			// real record that immediately follows on the wire (fabricating a
+			// name from those bytes instead of stopping at this record's
+			// boundary). The record that follows is placed directly after these
+			// 2 rdata bytes, matching the declared rdlength exactly, so
+			// readDnsRecord()'s resync to the next record (always rdataStart +
+			// rdlength, regardless of how far a malformed record's own parsing
+			// wandered) lands exactly on it either way.
+			const badPtrHeader = Buffer.alloc(10);
+			badPtrHeader.writeUInt16BE(12, 0); // type PTR
+			badPtrHeader.writeUInt16BE(1, 2); // class IN
+			badPtrHeader.writeUInt32BE(120, 4); // ttl
+			badPtrHeader.writeUInt16BE(2, 8); // rdlength: 2 bytes, no room for a full name
+			const badPtrRdata = Buffer.from([1, 0x46]); // label length 1, then "F" - never terminates
+			const badPtrRecord = Buffer.concat([encodeName(serviceType), badPtrHeader, badPtrRdata]);
+
+			const goodPtrRecord = buildRecord(serviceType, 12, encodeName(goodInstanceName));
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(5555, 4);
+			const goodSrvRecord = buildRecord(goodInstanceName, 33, Buffer.concat([srvRdata, encodeName(goodHostname)]));
+			const goodTxtRecord = buildRecord(goodInstanceName, 16, Buffer.from([0])); // zero-length entry = "no data"
+			const goodARecord = buildRecord(goodHostname, 1, Buffer.from([10, 0, 0, 9]));
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(2, 6); // ANCOUNT: bad PTR + good PTR
+			header.writeUInt16BE(3, 10); // ARCOUNT: good SRV + TXT + A
+			responder.send(
+				Buffer.concat([header, badPtrRecord, goodPtrRecord, goodSrvRecord, goodTxtRecord, goodARecord]),
+				rinfo.port,
+				rinfo.address
+			);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		// No "Fake..." entry from the malformed PTR, and the legitimate device
+		// after it still parses correctly - readDnsRecord() always resyncs to the
+		// next record via the header's declared rdlength, regardless of how far
+		// a malformed record's own rdata parsing wandered.
+		expect(results).toEqual([{ name: goodInstanceName, host: "10.0.0.9", port: 5555, txt: {} }]);
+		expect(Object.getPrototypeOf(results[0].txt)).toBeNull();
+	});
+
+	test("ignores an SRV record whose declared rdlength is too small to hold priority/weight/port", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Bad SRV Device._adb-tls-connect._tcp.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+
+			// SRV rdata needs at least 6 bytes (priority+weight+port) before the
+			// target name even starts; this one declares only 2.
+			const badSrvHeader = Buffer.alloc(10);
+			badSrvHeader.writeUInt16BE(33, 0); // type SRV
+			badSrvHeader.writeUInt16BE(1, 2); // class IN
+			badSrvHeader.writeUInt32BE(120, 4); // ttl
+			badSrvHeader.writeUInt16BE(2, 8); // rdlength: too small for priority/weight/port
+			const badSrvRecord = Buffer.concat([encodeName(instanceName), badSrvHeader, Buffer.from([0, 0])]);
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header.writeUInt16BE(1, 10); // ARCOUNT: bad SRV
+			responder.send(Buffer.concat([header, ptrRecord, badSrvRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 300
+		});
+
+		// The PTR introduces the entry, but the malformed SRV never resolves a
+		// host/port for it, so it's filtered out of the final results.
+		expect(results).toEqual([]);
+	});
+
 	test("rejects an invalid port without opening a socket", async () => {
 		droidsock = await createDroidSock();
 		await expect(droidsock.discover.mdns({ port: 0 })).rejects.toThrow("Invalid port");

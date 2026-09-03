@@ -308,17 +308,36 @@ function readDnsRecord(buffer, offset) {
 
 	let data;
 	switch (type) {
-		case DNS_TYPE_PTR:
-			data = { target: decodeDnsName(buffer, rdataStart).name };
+		case DNS_TYPE_PTR: {
+			// decodeDnsName() doesn't know rdlength and will happily follow labels
+			// past rdataEnd into whatever bytes follow (the next record's header,
+			// or beyond) for a truncated/malformed record. Its returned `next` is
+			// the position right after the *local* encoding (the pointer bytes, or
+			// the terminating zero) - not where a compression pointer leads - so
+			// comparing it against rdataEnd catches an over-long name without
+			// needing to pre-validate label lengths. A record failing this check
+			// gets `data: null`, which ingestDnsRecords() must skip rather than use.
+			const ptr = decodeDnsName(buffer, rdataStart);
+			data = ptr.next <= rdataEnd ? { target: ptr.name } : null;
 			break;
-		case DNS_TYPE_SRV:
-			data = {
-				priority: buffer.readUInt16BE(rdataStart),
-				weight: buffer.readUInt16BE(rdataStart + 2),
-				port: buffer.readUInt16BE(rdataStart + 4),
-				target: decodeDnsName(buffer, rdataStart + 6).name
-			};
+		}
+		case DNS_TYPE_SRV: {
+			if (rdlength < 6) {
+				data = null;
+				break;
+			}
+			const srv = decodeDnsName(buffer, rdataStart + 6);
+			data =
+				srv.next <= rdataEnd
+					? {
+							priority: buffer.readUInt16BE(rdataStart),
+							weight: buffer.readUInt16BE(rdataStart + 2),
+							port: buffer.readUInt16BE(rdataStart + 4),
+							target: srv.name
+						}
+					: null;
 			break;
+		}
 		case DNS_TYPE_TXT: {
 			// Null-prototype: TXT keys come straight from network input, and a
 			// plain {} would let a key like "__proto__" interact with
@@ -437,7 +456,10 @@ function ingestDnsRecords(records, results, addresses) {
 	}
 
 	for (const record of records) {
-		if (record.type !== DNS_TYPE_PTR) continue;
+		// data is null for a PTR record whose rdata failed readDnsRecord()'s
+		// bounds check (truncated/malformed rdlength) - skip it rather than
+		// fabricate an instance name from whatever bytes followed.
+		if (record.type !== DNS_TYPE_PTR || !record.data) continue;
 		const instanceName = record.data.target;
 		if (!results.has(instanceName)) {
 			results.set(instanceName, { name: instanceName, txt: Object.create(null) });
@@ -450,6 +472,10 @@ function ingestDnsRecords(records, results, addresses) {
 	// and an unrelated SRV+TXT pair must not turn into a fabricated "device".
 	for (const record of records) {
 		if (record.type === DNS_TYPE_SRV) {
+			// data is null for a malformed/truncated SRV record (see
+			// readDnsRecord()) - skip rather than read priority/weight/port/target
+			// off a null.
+			if (!record.data) continue;
 			const entry = results.get(record.name);
 			if (!entry) continue;
 			entry.port = record.data.port;
