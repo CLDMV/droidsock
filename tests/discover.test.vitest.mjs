@@ -509,15 +509,20 @@ describe("discover.mdns", () => {
 			const header1 = Buffer.alloc(12);
 			header1.writeUInt16BE(1, 6); // ANCOUNT: PTR
 			header1.writeUInt16BE(1, 10); // ARCOUNT: A
-			responder.send(Buffer.concat([header1, ptrRecord, aRecord]), rinfo.port, rinfo.address);
 
-			// Second, separate message: SRV only.
-			const srvRdata = Buffer.alloc(6);
-			srvRdata.writeUInt16BE(6789, 4);
-			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
-			const header2 = Buffer.alloc(12);
-			header2.writeUInt16BE(1, 10); // ARCOUNT: SRV
-			responder.send(Buffer.concat([header2, srvRecord]), rinfo.port, rinfo.address);
+			// UDP doesn't guarantee delivery order - sending the second message
+			// from the first send()'s own completion callback (rather than just
+			// issuing both synchronously) makes the enqueue order deterministic
+			// instead of relying on it.
+			responder.send(Buffer.concat([header1, ptrRecord, aRecord]), rinfo.port, rinfo.address, () => {
+				// Second, separate message: SRV only.
+				const srvRdata = Buffer.alloc(6);
+				srvRdata.writeUInt16BE(6789, 4);
+				const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+				const header2 = Buffer.alloc(12);
+				header2.writeUInt16BE(1, 10); // ARCOUNT: SRV
+				responder.send(Buffer.concat([header2, srvRecord]), rinfo.port, rinfo.address);
+			});
 		});
 
 		const results = await droidsock.discover.mdns({
@@ -596,14 +601,18 @@ describe("discover.mdns", () => {
 			const header1 = Buffer.alloc(12);
 			header1.writeUInt16BE(1, 6); // ANCOUNT: PTR
 			header1.writeUInt16BE(2, 10); // ARCOUNT: SRV + A
-			responder.send(Buffer.concat([header1, ptrRecord, srvRecord, goodARecord]), rinfo.port, rinfo.address);
 
-			// Second, separate message: a malformed A record for the same
-			// hostname - must not clobber the already-cached valid address.
-			const badARecord = buildRecord(hostname, 1, Buffer.from([9, 9]));
-			const header2 = Buffer.alloc(12);
-			header2.writeUInt16BE(1, 10); // ARCOUNT: bad A
-			responder.send(Buffer.concat([header2, badARecord]), rinfo.port, rinfo.address);
+			// UDP doesn't guarantee delivery order - sending the second message
+			// from the first send()'s own completion callback makes the enqueue
+			// order deterministic instead of relying on it.
+			responder.send(Buffer.concat([header1, ptrRecord, srvRecord, goodARecord]), rinfo.port, rinfo.address, () => {
+				// Second, separate message: a malformed A record for the same
+				// hostname - must not clobber the already-cached valid address.
+				const badARecord = buildRecord(hostname, 1, Buffer.from([9, 9]));
+				const header2 = Buffer.alloc(12);
+				header2.writeUInt16BE(1, 10); // ARCOUNT: bad A
+				responder.send(Buffer.concat([header2, badARecord]), rinfo.port, rinfo.address);
+			});
 		});
 
 		const results = await droidsock.discover.mdns({
