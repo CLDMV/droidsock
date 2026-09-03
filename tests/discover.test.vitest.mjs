@@ -86,6 +86,11 @@ describe("discover.subnet", () => {
 		const results = await droidsock.discover.subnet("127.0.0.9/32", port, { timeoutMs: 300 });
 		expect(results).toEqual([{ host: "127.0.0.9", port }]);
 	});
+
+	test("accepts /0 as valid CIDR syntax, rejecting it via maxHosts rather than as an invalid prefix", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("0.0.0.0/0", 5555, { maxHosts: 1024 })).rejects.toThrow(/maxHosts/);
+	});
 });
 
 /**
@@ -241,5 +246,54 @@ describe("discover.mdns", () => {
 		});
 
 		expect(results).toEqual([]);
+	});
+
+	test("ignores a zero-length TXT entry and stops at a truncated one, keeping valid entries", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Weird TXT Device._adb-tls-connect._tcp.local";
+		const hostname = "weird-txt-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(4321, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+
+			const aRecord = buildRecord(hostname, 1, Buffer.from([10, 0, 0, 5]));
+
+			// "a=1", then a zero-length entry (RFC 6763's "no TXT data"), then a
+			// length byte claiming 10 bytes with only 2 actually remaining.
+			const txtRdata = Buffer.concat([
+				Buffer.from([3]),
+				Buffer.from("a=1", "utf8"),
+				Buffer.from([0]),
+				Buffer.from([10]),
+				Buffer.from("xy", "utf8")
+			]);
+			const txtRecord = buildRecord(instanceName, 16, txtRdata);
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(2, 6); // ANCOUNT: PTR + TXT
+			header.writeUInt16BE(2, 10); // ARCOUNT: SRV + A
+			responder.send(Buffer.concat([header, ptrRecord, txtRecord, srvRecord, aRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "10.0.0.5", port: 4321, txt: { a: "1" } }]);
 	});
 });

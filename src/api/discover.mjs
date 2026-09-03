@@ -54,7 +54,10 @@ function intToIp(int) {
 /**
  * Parses a CIDR block into its sweepable host range. Network/broadcast
  * addresses are excluded for prefixes /1-/30; a /31 (point-to-point, RFC
- * 3021) sweeps both addresses, and a /32 sweeps the single address.
+ * 3021) sweeps both addresses, and a /32 sweeps the single address. /0 is
+ * accepted per standard CIDR semantics (rejecting it would just be an
+ * inaccurate error message) but is always astronomically larger than any
+ * sane `maxHosts`, so `subnet()`'s guard rejects it before any sweeping.
  * @param {string} cidr - CIDR block, e.g. "192.168.1.0/24".
  * @returns {{firstHostInt: number, lastHostInt: number, sweepCount: number}} The sweepable range.
  */
@@ -65,8 +68,8 @@ function parseCidr(cidr) {
 	}
 
 	const prefix = Number(prefixStr);
-	if (!Number.isInteger(prefix) || prefix < 1 || prefix > 32) {
-		throw new Error(`Invalid CIDR prefix (must be 1-32): ${cidr}`);
+	if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+		throw new Error(`Invalid CIDR prefix (must be 0-32): ${cidr}`);
 	}
 
 	const base = ipToInt(ip);
@@ -74,6 +77,13 @@ function parseCidr(cidr) {
 
 	if (hostBits === 0) {
 		return { firstHostInt: base, lastHostInt: base, sweepCount: 1 };
+	}
+
+	if (hostBits === 32) {
+		// /0 - JS's `<<` treats a shift amount of 32 as 0 (masked mod 32), so
+		// the general mask math below can't represent this case; compute the
+		// whole-IPv4-space range directly instead.
+		return { firstHostInt: 1, lastHostInt: 0xfffffffe, sweepCount: 0xfffffffe };
 	}
 
 	const mask = (~0 << hostBits) >>> 0;
@@ -280,6 +290,14 @@ function readDnsRecord(buffer, offset) {
 			while (p < rdataEnd) {
 				const len = buffer.readUInt8(p);
 				p += 1;
+				// A zero-length string is RFC 6763's canonical "no TXT data" -
+				// not a real key/value entry, so it's skipped rather than
+				// recorded as a bogus `{"": true}`. A length claiming more
+				// bytes than remain in this record is truncated/malformed;
+				// stop here rather than reading past rdataEnd into whatever
+				// record follows.
+				if (len === 0) continue;
+				if (p + len > rdataEnd) break;
 				const entry = buffer.toString("utf8", p, p + len);
 				p += len;
 				const eq = entry.indexOf("=");
@@ -341,6 +359,18 @@ function buildPtrQuery(serviceType) {
 	question.writeUInt16BE(DNS_TYPE_PTR, 0);
 	question.writeUInt16BE(DNS_CLASS_IN, 2);
 	return Buffer.concat([header, encodeDnsName(serviceType), question]);
+}
+
+/**
+ * Checks whether an IPv4 address falls in the multicast range
+ * (224.0.0.0-239.255.255.255, i.e. a first octet of 224-239) - the whole
+ * range, not just the well-known mDNS group address.
+ * @param {string} address - Dotted IPv4 address.
+ * @returns {boolean} True if `address` is a multicast address.
+ */
+function isMulticastAddress(address) {
+	const firstOctet = Number(address.split(".", 1)[0]);
+	return Number.isInteger(firstOctet) && firstOctet >= 224 && firstOctet <= 239;
 }
 
 /**
@@ -416,7 +446,7 @@ export function mdns(options = {}) {
 	// (tests, or a caller pointing at a specific responder) reply straight to
 	// whatever port the query came from, so an ephemeral bind is fine - and
 	// avoids a same-host port clash when the target is a loopback responder.
-	const isMulticast = address.startsWith("224.") || address.startsWith("239.");
+	const isMulticast = isMulticastAddress(address);
 
 	const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
 	const results = new Map();
