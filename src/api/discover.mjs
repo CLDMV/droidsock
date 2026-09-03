@@ -539,6 +539,17 @@ export async function mdns(options = {}) {
 				}
 			}
 
+			// RFC 6762 section 11: mDNS queries/responses SHOULD be sent with IP
+			// TTL 255, not the platform's regular multicast TTL default (usually
+			// 1) - a querier not sending TTL 255 risks being ignored by strict
+			// responders. Harmless to set even on the direct-unicast test path,
+			// since it only governs multicast-destined packets.
+			try {
+				socket.setMulticastTTL(255);
+			} catch (error) {
+				self.log.debug(`discover.mdns: couldn't set multicast TTL - ${error.message}`);
+			}
+
 			self.log.debug(`discover.mdns: querying ${serviceType} via ${address}:${port}`);
 			socket.send(buildPtrQuery(serviceType), port, address, (error) => {
 				if (error) finish(reject, error);

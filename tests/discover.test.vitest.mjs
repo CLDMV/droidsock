@@ -131,11 +131,17 @@ describe("discover.subnet", () => {
  * @returns {Buffer} Encoded name.
  */
 function encodeName(name) {
+	// Length-prefix each label with its UTF-8 BYTE length, not the source
+	// string's .length (UTF-16 code units) - the two diverge for any
+	// non-ASCII label, matching discover.mjs's own encodeDnsName.
 	const labels = name
 		.replace(/\.$/, "")
 		.split(".")
 		.filter(Boolean)
-		.map((label) => Buffer.concat([Buffer.from([label.length]), Buffer.from(label, "utf8")]));
+		.map((label) => {
+			const labelBuf = Buffer.from(label, "utf8");
+			return Buffer.concat([Buffer.from([labelBuf.length]), labelBuf]);
+		});
 	return Buffer.concat([...labels, Buffer.from([0])]);
 }
 
@@ -380,6 +386,45 @@ describe("discover.mdns", () => {
 		expect(results[0].txt["__proto__"]).toBe("polluted");
 		// Sanity: the global Object.prototype itself was never touched.
 		expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+	});
+
+	test("round-trips a non-ASCII instance name correctly", async () => {
+		// A label's DNS length-prefix byte must be its UTF-8 BYTE length, not
+		// its JS string .length (UTF-16 code units) - the two diverge for any
+		// non-ASCII character. This exercises both this test file's encodeName
+		// helper and discover.mjs's own decodeDnsName/encodeDnsName.
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Café Device ☕._adb-tls-connect._tcp.local";
+		const hostname = "cafe-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const response = buildMdnsResponse({
+				serviceType,
+				instanceName,
+				hostname,
+				port: 4444,
+				address: "10.0.0.9",
+				txt: {}
+			});
+			responder.send(response, rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "10.0.0.9", port: 4444, txt: {} }]);
 	});
 
 	test("resolves host when the A record arrives in an earlier message than its SRV", async () => {
