@@ -376,4 +376,58 @@ describe("discover.mdns", () => {
 		// Sanity: the global Object.prototype itself was never touched.
 		expect(Object.getPrototypeOf({})).toBe(Object.prototype);
 	});
+
+	test("resolves host when the A record arrives in an earlier message than its SRV", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Split Device._adb-tls-connect._tcp.local";
+		const hostname = "split-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			// First message: PTR + A only - the SRV that needs this A record
+			// hasn't been sent yet, exercising the cross-message address cache.
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+			const aRecord = buildRecord(hostname, 1, Buffer.from([10, 0, 0, 7]));
+			const header1 = Buffer.alloc(12);
+			header1.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header1.writeUInt16BE(1, 10); // ARCOUNT: A
+			responder.send(Buffer.concat([header1, ptrRecord, aRecord]), rinfo.port, rinfo.address);
+
+			// Second, separate message: SRV only.
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(6789, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+			const header2 = Buffer.alloc(12);
+			header2.writeUInt16BE(1, 10); // ARCOUNT: SRV
+			responder.send(Buffer.concat([header2, srvRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "10.0.0.7", port: 6789, txt: {} }]);
+	});
+
+	test("rejects an invalid port without opening a socket", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ port: 0 })).rejects.toThrow("Invalid port");
+		await expect(droidsock.discover.mdns({ port: 70000 })).rejects.toThrow("Invalid port");
+	});
+
+	test("rejects a non-positive timeoutMs", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ timeoutMs: 0 })).rejects.toThrow("Invalid timeoutMs");
+		await expect(droidsock.discover.mdns({ timeoutMs: -5 })).rejects.toThrow("Invalid timeoutMs");
+	});
 });

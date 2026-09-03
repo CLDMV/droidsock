@@ -403,12 +403,17 @@ function isMulticastAddress(address) {
  * service instance name (PTR's target = SRV/TXT's owner name). A record can
  * arrive before the records it depends on (e.g. an SRV before its target's A
  * record), so entries are updated in place as later records fill them in.
+ * `addresses` is owned by the caller and persists across every message in a
+ * single mdns() call - an A record and the SRV that needs it commonly arrive
+ * in the same message, but a larger/split response can send them in separate
+ * messages, and a map rebuilt fresh per-message would never see the earlier
+ * one by the time the later message's SRV needs it.
  * @param {Array<{name: string, type: number, data: *}>} records - Records parsed from one message.
  * @param {Map<string, {name: string, host?: string, port?: number, txt: Object, _target?: string}>} results - Running discovery map, mutated in place.
+ * @param {Map<string, string>} addresses - Hostname -> IP cache spanning every message in this discovery call, mutated in place.
  * @returns {void}
  */
-function ingestDnsRecords(records, results) {
-	const addresses = new Map();
+function ingestDnsRecords(records, results, addresses) {
 	for (const record of records) {
 		if (record.type === DNS_TYPE_A) addresses.set(record.name, record.data);
 	}
@@ -468,8 +473,16 @@ function ingestDnsRecords(records, results) {
  * @param {number} [options.timeoutMs=3000] - How long to collect responses before resolving.
  * @returns {Promise<Array<{name: string, host: string, port: number, txt: Object}>>} Discovered devices with a resolved host and port.
  */
-export function mdns(options = {}) {
+export async function mdns(options = {}) {
 	const { serviceType = "_adb-tls-connect._tcp.local", address = "224.0.0.251", port = 5353, timeoutMs = 3000 } = options;
+
+	if (!isValidPort(port)) {
+		throw new Error(`Invalid port: ${port}`);
+	}
+	if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+		throw new Error(`Invalid timeoutMs: ${timeoutMs} (must be a positive integer)`);
+	}
+
 	// A compliant mDNS responder replies via MULTICAST back to address:port,
 	// not to the querier's source port - so receiving real replies requires
 	// binding to that exact port, not an ephemeral one. Direct-unicast targets
@@ -480,6 +493,7 @@ export function mdns(options = {}) {
 
 	const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
 	const results = new Map();
+	const addresses = new Map();
 	let settled = false;
 
 	return new Promise((resolve, reject) => {
@@ -496,7 +510,7 @@ export function mdns(options = {}) {
 
 		socket.on("message", (message) => {
 			try {
-				ingestDnsRecords(parseDnsMessage(message), results);
+				ingestDnsRecords(parseDnsMessage(message), results, addresses);
 			} catch (error) {
 				self.log.debug(`discover.mdns: ignoring unparseable response - ${error.message}`);
 			}
