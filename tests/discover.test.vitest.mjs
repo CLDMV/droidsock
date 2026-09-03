@@ -183,8 +183,15 @@ function buildMdnsResponse({ serviceType, instanceName, hostname, port, address,
 	srvRdata.writeUInt16BE(port, 4);
 	const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
 
+	// Length-prefix each entry with its UTF-8 BYTE length, not the source
+	// string's .length (UTF-16 code units) - see encodeName()'s comment above.
 	const txtEntries = Object.entries(txt).map(([k, v]) => `${k}=${v}`);
-	const txtRdata = Buffer.concat(txtEntries.map((entry) => Buffer.concat([Buffer.from([entry.length]), Buffer.from(entry, "utf8")])));
+	const txtRdata = Buffer.concat(
+		txtEntries.map((entry) => {
+			const entryBuf = Buffer.from(entry, "utf8");
+			return Buffer.concat([Buffer.from([entryBuf.length]), entryBuf]);
+		})
+	);
 	const txtRecord = buildRecord(instanceName, 16, txtRdata.length > 0 ? txtRdata : Buffer.from([0]));
 
 	const aRdata = Buffer.from(address.split(".").map(Number));
@@ -425,6 +432,60 @@ describe("discover.mdns", () => {
 		});
 
 		expect(results).toEqual([{ name: instanceName, host: "10.0.0.9", port: 4444, txt: {} }]);
+	});
+
+	test("round-trips a non-ASCII TXT value correctly", async () => {
+		// Same UTF-8-byte-length-vs-JS-.length distinction as the instance-name
+		// test above, but for buildMdnsResponse()'s TXT encoding specifically.
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Emoji TXT Device._adb-tls-connect._tcp.local";
+		const hostname = "emoji-txt-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const response = buildMdnsResponse({
+				serviceType,
+				instanceName,
+				hostname,
+				port: 7777,
+				address: "10.0.0.10",
+				txt: { name: "Café ☕ Device" }
+			});
+			responder.send(response, rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "10.0.0.10", port: 7777, txt: { name: "Café ☕ Device" } }]);
+	});
+
+	test("rejects a serviceType with a DNS label longer than 63 bytes", async () => {
+		droidsock = await createDroidSock();
+		const longLabel = "a".repeat(64);
+		await expect(
+			droidsock.discover.mdns({ serviceType: `${longLabel}._tcp.local`, address: "127.0.0.1", port: 1, timeoutMs: 200 })
+		).rejects.toThrow("DNS label too long");
+	});
+
+	test("rejects a serviceType whose encoded name exceeds 255 bytes", async () => {
+		droidsock = await createDroidSock();
+		const label = "a".repeat(63);
+		const longName = `${Array.from({ length: 5 }, () => label).join(".")}.local`;
+		await expect(droidsock.discover.mdns({ serviceType: longName, address: "127.0.0.1", port: 1, timeoutMs: 200 })).rejects.toThrow(
+			"DNS name too long"
+		);
 	});
 
 	test("resolves host when the A record arrives in an earlier message than its SRV", async () => {

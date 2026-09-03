@@ -225,9 +225,22 @@ function encodeDnsName(name) {
 	const labels = name.replace(/\.$/, "").split(".").filter(Boolean);
 	const parts = labels.map((label) => {
 		const labelBuf = Buffer.from(label, "utf8");
+		// RFC 1035 3.1: a label's length byte's top two bits are reserved for
+		// compression-pointer signaling, so a real label length is 0-63 - not
+		// just "fits in a byte". Without this check, a label >=64 bytes writes
+		// a wrong/misleading length (and one >255 bytes silently wraps, since
+		// Buffer.from([n]) truncates n to a byte), corrupting the message in a
+		// way a receiver (including our own decodeDnsName) can't recover from.
+		if (labelBuf.length > 63) {
+			throw new Error(`DNS label too long (max 63 bytes): "${label}"`);
+		}
 		return Buffer.concat([Buffer.from([labelBuf.length]), labelBuf]);
 	});
-	return Buffer.concat([...parts, Buffer.from([0])]);
+	const encoded = Buffer.concat([...parts, Buffer.from([0])]);
+	if (encoded.length > 255) {
+		throw new Error(`DNS name too long (max 255 bytes): "${name}"`);
+	}
+	return encoded;
 }
 
 /**
@@ -488,6 +501,15 @@ export async function mdns(options = {}) {
 		throw new Error(`Invalid timeoutMs: ${timeoutMs} (must be a positive integer)`);
 	}
 
+	// Built up front, synchronously, rather than inside the bind callback
+	// below - a throw there (e.g. an oversized serviceType hitting
+	// encodeDnsName's length guards) would occur inside dgram's event-emission
+	// machinery, outside any try/catch, and could crash the process instead
+	// of cleanly rejecting this promise. Building it here lets the `async`
+	// wrapper turn that throw into a normal rejection, matching the
+	// port/timeoutMs validation above.
+	const query = buildPtrQuery(serviceType);
+
 	// A compliant mDNS responder replies via MULTICAST back to address:port,
 	// not to the querier's source port - so receiving real replies requires
 	// binding to that exact port, not an ephemeral one. Direct-unicast targets
@@ -551,7 +573,7 @@ export async function mdns(options = {}) {
 			}
 
 			self.log.debug(`discover.mdns: querying ${serviceType} via ${address}:${port}`);
-			socket.send(buildPtrQuery(serviceType), port, address, (error) => {
+			socket.send(query, port, address, (error) => {
 				if (error) finish(reject, error);
 			});
 		});
