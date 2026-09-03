@@ -415,7 +415,12 @@ function isMulticastAddress(address) {
  */
 function ingestDnsRecords(records, results, addresses) {
 	for (const record of records) {
-		if (record.type === DNS_TYPE_A) addresses.set(record.name, record.data);
+		// readDnsRecord() joins whatever bytes rdata holds regardless of rdlength,
+		// so a malformed/hostile A record (rdlength != 4) can produce a
+		// wrong-shaped string. Validate before caching - an unvalidated write
+		// here could otherwise silently overwrite a previously-cached valid
+		// address for the same hostname.
+		if (record.type === DNS_TYPE_A && isValidIP(record.data)) addresses.set(record.name, record.data);
 	}
 
 	for (const record of records) {

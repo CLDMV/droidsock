@@ -234,6 +234,10 @@ describe("discover.mdns", () => {
 				txt: { name: "My Device" }
 			}
 		]);
+		// toEqual doesn't compare prototypes (a plain-object txt would still
+		// pass the assertion above), so the null-proto hardening needs its own
+		// explicit check to actually catch a regression back to {}.
+		expect(Object.getPrototypeOf(results[0].txt)).toBeNull();
 	});
 
 	test("resolves to an empty array when no responder answers", async () => {
@@ -326,6 +330,7 @@ describe("discover.mdns", () => {
 		});
 
 		expect(results).toEqual([{ name: instanceName, host: "10.0.0.5", port: 4321, txt: { a: "1" } }]);
+		expect(Object.getPrototypeOf(results[0].txt)).toBeNull();
 	});
 
 	test("keeps a __proto__ TXT key inert - txt objects are null-prototype, not plain objects", async () => {
@@ -417,6 +422,92 @@ describe("discover.mdns", () => {
 		});
 
 		expect(results).toEqual([{ name: instanceName, host: "10.0.0.7", port: 6789, txt: {} }]);
+		expect(Object.getPrototypeOf(results[0].txt)).toBeNull();
+	});
+
+	test("ignores a malformed A record (wrong rdlength) instead of caching a garbage address", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Bad A Device._adb-tls-connect._tcp.local";
+		const hostname = "bad-a-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(5555, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+
+			// Malformed A record: only 2 rdata bytes instead of the required 4.
+			const badARecord = buildRecord(hostname, 1, Buffer.from([10, 0]));
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header.writeUInt16BE(2, 10); // ARCOUNT: SRV + bad A
+			responder.send(Buffer.concat([header, ptrRecord, srvRecord, badARecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 300
+		});
+
+		// The entry never resolves a host, so it's filtered out of the final
+		// results rather than surfacing a bogus address like "10.0".
+		expect(results).toEqual([]);
+	});
+
+	test("a malformed A record never overwrites a previously cached valid address", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Stale A Device._adb-tls-connect._tcp.local";
+		const hostname = "stale-a-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(5556, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+			const goodARecord = buildRecord(hostname, 1, Buffer.from([10, 0, 0, 8]));
+
+			// First message: PTR + SRV + a valid A record.
+			const header1 = Buffer.alloc(12);
+			header1.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header1.writeUInt16BE(2, 10); // ARCOUNT: SRV + A
+			responder.send(Buffer.concat([header1, ptrRecord, srvRecord, goodARecord]), rinfo.port, rinfo.address);
+
+			// Second, separate message: a malformed A record for the same
+			// hostname - must not clobber the already-cached valid address.
+			const badARecord = buildRecord(hostname, 1, Buffer.from([9, 9]));
+			const header2 = Buffer.alloc(12);
+			header2.writeUInt16BE(1, 10); // ARCOUNT: bad A
+			responder.send(Buffer.concat([header2, badARecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "10.0.0.8", port: 5556, txt: {} }]);
 	});
 
 	test("rejects an invalid port without opening a socket", async () => {
