@@ -46,10 +46,13 @@ afterEach(async () => {
  * @returns {Promise<number>} The bound port.
  */
 function listenOn(address) {
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		const server = net.createServer((socket) => socket.end());
-		openServers.push(server);
-		server.listen(0, address, () => resolve(server.address().port));
+		server.once("error", reject);
+		server.listen(0, address, () => {
+			openServers.push(server);
+			resolve(server.address().port);
+		});
 	});
 }
 
