@@ -224,6 +224,20 @@ export function escapeShell(str) {
 }
 
 /**
+ * Wraps a string in single quotes for safe interpolation into a POSIX shell
+ * command, using the standard close-quote/escaped-quote/reopen-quote technique
+ * (`'` -> `'\''`) for any embedded single quotes. Unlike double-quote-based
+ * escaping (see escapeShell), a single-quoted string has no metacharacters at
+ * all - `$`, backticks, and `"` all pass through inert - so the only character
+ * that needs handling is the quote delimiter itself.
+ * @param {*} str - Value to quote; coerced via String() if not already a string
+ * @returns {string} Single-quoted, shell-safe string
+ */
+export function quoteShellArg(str) {
+	return `'${String(str).replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * Creates a timeout promise that rejects after specified time
  * @param {number} ms - Timeout in milliseconds
  * @param {string} [message='Operation timed out'] - Timeout error message
