@@ -366,17 +366,21 @@ function ingestDnsRecords(records, results) {
 		}
 	}
 
+	// Only fold SRV/TXT into an instance name a PTR record actually introduced
+	// (this message or an earlier one) - joining the multicast group means this
+	// socket also receives every OTHER service's mDNS traffic on the segment,
+	// and an unrelated SRV+TXT pair must not turn into a fabricated "device".
 	for (const record of records) {
 		if (record.type === DNS_TYPE_SRV) {
-			const entry = results.get(record.name) || { name: record.name, txt: {} };
+			const entry = results.get(record.name);
+			if (!entry) continue;
 			entry.port = record.data.port;
 			entry._target = record.data.target;
 			entry.host = addresses.get(record.data.target) || entry.host;
-			results.set(record.name, entry);
 		} else if (record.type === DNS_TYPE_TXT) {
-			const entry = results.get(record.name) || { name: record.name, txt: {} };
+			const entry = results.get(record.name);
+			if (!entry) continue;
 			entry.txt = { ...entry.txt, ...record.data };
-			results.set(record.name, entry);
 		}
 	}
 
@@ -406,6 +410,13 @@ function ingestDnsRecords(records, results) {
  */
 export function mdns(options = {}) {
 	const { serviceType = "_adb-tls-connect._tcp.local", address = "224.0.0.251", port = 5353, timeoutMs = 3000 } = options;
+	// A compliant mDNS responder replies via MULTICAST back to address:port,
+	// not to the querier's source port - so receiving real replies requires
+	// binding to that exact port, not an ephemeral one. Direct-unicast targets
+	// (tests, or a caller pointing at a specific responder) reply straight to
+	// whatever port the query came from, so an ephemeral bind is fine - and
+	// avoids a same-host port clash when the target is a loopback responder.
+	const isMulticast = address.startsWith("224.") || address.startsWith("239.");
 
 	const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
 	const results = new Map();
@@ -440,8 +451,8 @@ export function mdns(options = {}) {
 			);
 		}, timeoutMs);
 
-		socket.bind(0, () => {
-			if (address.startsWith("224.") || address.startsWith("239.")) {
+		socket.bind(isMulticast ? port : 0, () => {
+			if (isMulticast) {
 				try {
 					socket.addMembership(address);
 				} catch (error) {

@@ -32,7 +32,8 @@ afterEach(async () => {
 		await new Promise((resolve) => server.close(() => resolve()));
 	}
 	while (openSockets.length) {
-		openSockets.pop().close();
+		const socket = openSockets.pop();
+		await new Promise((resolve) => socket.close(() => resolve()));
 	}
 	if (droidsock?.shutdown) await droidsock.shutdown();
 	droidsock = undefined;
@@ -202,6 +203,43 @@ describe("discover.mdns", () => {
 	test("resolves to an empty array when no responder answers", async () => {
 		droidsock = await createDroidSock();
 		const results = await droidsock.discover.mdns({ address: "127.0.0.1", port: 65533, timeoutMs: 200 });
+		expect(results).toEqual([]);
+	});
+
+	test("ignores SRV/TXT/A records for a name no PTR record introduced", async () => {
+		// Joining the multicast group also receives every OTHER service's mDNS
+		// traffic on the segment - an unrelated SRV+TXT+A triple (no PTR for our
+		// queried service) must not be fabricated into a device entry.
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		responder.on("message", (_msg, rinfo) => {
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(12345, 4);
+			const srvRecord = buildRecord(
+				"some-other-service._airplay._tcp.local",
+				33,
+				Buffer.concat([srvRdata, encodeName("other-host.local")])
+			);
+			const aRecord = buildRecord("other-host.local", 1, Buffer.from([10, 6, 0, 99]));
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(2, 6); // ANCOUNT: SRV + A, no PTR
+			responder.send(Buffer.concat([header, srvRecord, aRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType: "_adb-tls-connect._tcp.local",
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 300
+		});
+
 		expect(results).toEqual([]);
 	});
 });
