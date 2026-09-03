@@ -18,7 +18,7 @@
 import { self } from "@cldmv/slothlet/runtime";
 import net from "node:net";
 import dgram from "node:dgram";
-import { isValidIP } from "./utils.mjs";
+import { isValidIP, isValidPort } from "./utils.mjs";
 
 // DNS record types/classes used by the mDNS query/response this module builds
 // and parses. Only the handful mDNS device discovery actually needs.
@@ -62,13 +62,18 @@ function intToIp(int) {
  * @returns {{firstHostInt: number, lastHostInt: number, sweepCount: number}} The sweepable range.
  */
 function parseCidr(cidr) {
-	const [ip, prefixStr] = String(cidr).split("/");
-	if (!ip || !isValidIP(ip) || prefixStr === undefined) {
+	// Split into exactly ip + prefix - split("/") silently drops anything past
+	// a second "/" (e.g. "1.2.3.4/24/extra") if only destructured, and an
+	// empty prefix ("1.2.3.4/") coerces to 0 via Number("") rather than
+	// failing, both of which a bare length/undefined check lets through.
+	const parts = String(cidr).split("/");
+	if (parts.length !== 2 || !isValidIP(parts[0]) || !/^\d+$/.test(parts[1])) {
 		throw new Error(`Invalid CIDR: ${cidr}`);
 	}
+	const [ip, prefixStr] = parts;
 
 	const prefix = Number(prefixStr);
-	if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+	if (prefix > 32) {
 		throw new Error(`Invalid CIDR prefix (must be 0-32): ${cidr}`);
 	}
 
@@ -172,6 +177,23 @@ async function sweepPool(hosts, port, { timeoutMs, concurrency }) {
  */
 export async function subnet(cidr, port = 5555, options = {}) {
 	const { timeoutMs = 500, concurrency = 32, maxHosts = 1024 } = options;
+
+	// concurrency <= 0 would silently spawn zero workers (Array.from clamps a
+	// non-positive length to 0), resolving to [] even when hosts ARE reachable
+	// - a silent-wrong-result bug, not an error, so it needs an explicit guard
+	// rather than relying on something downstream to catch it.
+	if (!isValidPort(port)) {
+		throw new Error(`Invalid port: ${port}`);
+	}
+	if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+		throw new Error(`Invalid timeoutMs: ${timeoutMs} (must be a positive integer)`);
+	}
+	if (!Number.isInteger(concurrency) || concurrency <= 0) {
+		throw new Error(`Invalid concurrency: ${concurrency} (must be a positive integer)`);
+	}
+	if (!Number.isInteger(maxHosts) || maxHosts <= 0) {
+		throw new Error(`Invalid maxHosts: ${maxHosts} (must be a positive integer)`);
+	}
 
 	const range = parseCidr(cidr);
 	if (range.sweepCount > maxHosts) {
@@ -285,7 +307,10 @@ function readDnsRecord(buffer, offset) {
 			};
 			break;
 		case DNS_TYPE_TXT: {
-			const txt = {};
+			// Null-prototype: TXT keys come straight from network input, and a
+			// plain {} would let a key like "__proto__" interact with
+			// Object.prototype's accessor once assigned or later merged.
+			const txt = Object.create(null);
 			let p = rdataStart;
 			while (p < rdataEnd) {
 				const len = buffer.readUInt8(p);
@@ -392,7 +417,7 @@ function ingestDnsRecords(records, results) {
 		if (record.type !== DNS_TYPE_PTR) continue;
 		const instanceName = record.data.target;
 		if (!results.has(instanceName)) {
-			results.set(instanceName, { name: instanceName, txt: {} });
+			results.set(instanceName, { name: instanceName, txt: Object.create(null) });
 		}
 	}
 
@@ -410,7 +435,12 @@ function ingestDnsRecords(records, results) {
 		} else if (record.type === DNS_TYPE_TXT) {
 			const entry = results.get(record.name);
 			if (!entry) continue;
-			entry.txt = { ...entry.txt, ...record.data };
+			// Object.assign mutates entry.txt in place, preserving its
+			// null prototype - a `{...entry.txt, ...record.data}` spread would
+			// always produce a normal Object.prototype-based object regardless
+			// of the source's own prototype, reintroducing the exact risk the
+			// null-proto txt objects exist to avoid.
+			Object.assign(entry.txt, record.data);
 		}
 	}
 

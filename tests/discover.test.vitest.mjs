@@ -80,6 +80,37 @@ describe("discover.subnet", () => {
 		await expect(droidsock.discover.subnet("not-a-cidr", 5555)).rejects.toThrow("Invalid CIDR");
 	});
 
+	test.each([["1.2.3.4/24/extra"], ["1.2.3.4/"], ["1.2.3.4/1e1"], ["1.2.3.4/-1"]])(
+		"rejects a malformed CIDR prefix (%p) instead of silently coercing it",
+		async (cidr) => {
+			droidsock = await createDroidSock();
+			await expect(droidsock.discover.subnet(cidr, 5555)).rejects.toThrow("Invalid CIDR");
+		}
+	);
+
+	test("rejects an invalid port without attempting any connection", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 0)).rejects.toThrow("Invalid port");
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 70000)).rejects.toThrow("Invalid port");
+	});
+
+	test("rejects a non-positive timeoutMs", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 5555, { timeoutMs: 0 })).rejects.toThrow("Invalid timeoutMs");
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 5555, { timeoutMs: -5 })).rejects.toThrow("Invalid timeoutMs");
+	});
+
+	test("rejects a non-positive concurrency instead of silently sweeping nothing", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 5555, { concurrency: 0 })).rejects.toThrow("Invalid concurrency");
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 5555, { concurrency: -1 })).rejects.toThrow("Invalid concurrency");
+	});
+
+	test("rejects a non-positive maxHosts", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 5555, { maxHosts: 0 })).rejects.toThrow("Invalid maxHosts");
+	});
+
 	test("sweeps a /32 as a single host", async () => {
 		droidsock = await createDroidSock();
 		const port = await listenOn("127.0.0.9");
@@ -295,5 +326,54 @@ describe("discover.mdns", () => {
 		});
 
 		expect(results).toEqual([{ name: instanceName, host: "10.0.0.5", port: 4321, txt: { a: "1" } }]);
+	});
+
+	test("keeps a __proto__ TXT key inert - txt objects are null-prototype, not plain objects", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Proto Device._adb-tls-connect._tcp.local";
+		const hostname = "proto-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(9999, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+
+			const aRecord = buildRecord(hostname, 1, Buffer.from([10, 0, 0, 6]));
+
+			// A TXT entry literally keyed "__proto__" - on a plain {} this key
+			// interacts with Object.prototype's __proto__ accessor; on a
+			// null-prototype object it's just an ordinary own property.
+			const protoEntry = "__proto__=polluted";
+			const txtRdata = Buffer.concat([Buffer.from([protoEntry.length]), Buffer.from(protoEntry, "utf8")]);
+			const txtRecord = buildRecord(instanceName, 16, txtRdata);
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(2, 6); // ANCOUNT: PTR + TXT
+			header.writeUInt16BE(2, 10); // ARCOUNT: SRV + A
+			responder.send(Buffer.concat([header, ptrRecord, txtRecord, srvRecord, aRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toHaveLength(1);
+		expect(Object.getPrototypeOf(results[0].txt)).toBeNull();
+		expect(results[0].txt["__proto__"]).toBe("polluted");
+		// Sanity: the global Object.prototype itself was never touched.
+		expect(Object.getPrototypeOf({})).toBe(Object.prototype);
 	});
 });
