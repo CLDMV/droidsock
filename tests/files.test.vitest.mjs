@@ -125,6 +125,11 @@ describe("files.mkdir", () => {
 		// inert inside single quotes, so no metacharacter reaches the shell unescaped.
 		expect(command).toBe("mkdir -p '/sdcard/it'\\''s a test`$(rm -rf /)`' && chmod 755 '/sdcard/it'\\''s a test`$(rm -rf /)`'");
 	});
+
+	test.each([["07777"], [0o10000], [-1], [420.5], [null]])("rejects an invalid mode (%p) without building a command", async (mode) => {
+		await expect(droidsock.files.mkdir(fakeSocket, fakeStreamManager, "/sdcard/newdir", mode)).rejects.toThrow("Invalid mode");
+		expect(droidsock.shell.execute).not.toHaveBeenCalled();
+	});
 });
 
 describe("files.remove", () => {
@@ -183,6 +188,11 @@ describe("files.chmod", () => {
 		await droidsock.files.chmod(fakeSocket, fakeStreamManager, "/sdcard/dir", 0o755, true);
 		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "chmod -R 755 '/sdcard/dir'");
 	});
+
+	test.each([["644"], [0o10000], [-1], [420.5]])("rejects an invalid mode (%p) without building a command", async (mode) => {
+		await expect(droidsock.files.chmod(fakeSocket, fakeStreamManager, "/sdcard/dir", mode)).rejects.toThrow("Invalid mode");
+		expect(droidsock.shell.execute).not.toHaveBeenCalled();
+	});
 });
 
 describe("files.diskUsage", () => {
@@ -206,6 +216,21 @@ describe("files.find", () => {
 	test("adds -maxdepth when given", async () => {
 		await droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt", { maxDepth: 2 });
 		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "find '/sdcard' -maxdepth 2 -name '*.txt'");
+	});
+
+	test("honors maxDepth: 0 (a falsy-but-valid value)", async () => {
+		await droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt", { maxDepth: 0 });
+		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "find '/sdcard' -maxdepth 0 -name '*.txt'");
+	});
+
+	test.each([[-1], [1.5], ["2"]])("rejects an invalid maxDepth (%p) without building a command", async (maxDepth) => {
+		await expect(droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt", { maxDepth })).rejects.toThrow("Invalid maxDepth");
+		expect(droidsock.shell.execute).not.toHaveBeenCalled();
+	});
+
+	test.each([["f; rm -rf /"], ["x"], [""]])("rejects an invalid type (%p) without building a command", async (type) => {
+		await expect(droidsock.files.find(fakeSocket, fakeStreamManager, "/sdcard", "*.txt", { type })).rejects.toThrow("Invalid type");
+		expect(droidsock.shell.execute).not.toHaveBeenCalled();
 	});
 
 	test("adds -type when given", async () => {

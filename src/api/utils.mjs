@@ -230,7 +230,7 @@ export function escapeShell(str) {
  * escaping (see escapeShell), a single-quoted string has no metacharacters at
  * all - `$`, backticks, and `"` all pass through inert - so the only character
  * that needs handling is the quote delimiter itself.
- * @param {string} str - String to quote
+ * @param {*} str - Value to quote; coerced via String() if not already a string
  * @returns {string} Single-quoted, shell-safe string
  */
 export function quoteShellArg(str) {

@@ -19,6 +19,25 @@ import { self } from "@cldmv/slothlet/runtime";
 import { parseListing, quoteShellArg } from "./utils.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 
+/**
+ * Validates a POSIX file mode before it's interpolated (via `.toString(8)`)
+ * into a chmod/mkdir shell command. `mode.toString(8)` only performs the
+ * octal conversion for an actual number - passed a string, `String.prototype
+ * .toString()` ignores the radix argument entirely and returns the string
+ * as-is, which would let unvalidated input reach the shell unescaped. Rather
+ * than coerce, this rejects anything that isn't already a plain integer in
+ * the valid permission-bits range (rwx for user/group/other plus
+ * setuid/setgid/sticky).
+ * @param {*} mode - Value to validate.
+ * @returns {number} The validated mode, unchanged.
+ */
+function assertValidMode(mode) {
+	if (!Number.isInteger(mode) || mode < 0 || mode > 0o7777) {
+		throw new Error(`Invalid mode: ${mode} (must be an integer between 0 and 0o7777)`);
+	}
+	return mode;
+}
+
 // ADB SYNC sub-protocol (nested inside a stream opened to the "sync:"
 // destination). EXPERIMENTAL: implemented directly from the public protocol
 // spec (AOSP adb/SYNC.TXT; cross-checked against Google's own reference
@@ -409,6 +428,7 @@ export async function stat(socket, streamManager, remotePath) {
  * @returns {Promise<void>}
  */
 export async function mkdir(socket, streamManager, remotePath, mode = 0o755) {
+	assertValidMode(mode);
 	// Use shell command to create directory
 	const command = `mkdir -p ${quoteShellArg(remotePath)} && chmod ${mode.toString(8)} ${quoteShellArg(remotePath)}`;
 	return await self.shell.execute(socket, streamManager, command);
@@ -466,6 +486,7 @@ export async function copy(socket, streamManager, sourcePath, destPath, recursiv
  * @returns {Promise<void>}
  */
 export async function chmod(socket, streamManager, remotePath, mode, recursive = false) {
+	assertValidMode(mode);
 	const flag = recursive ? "-R" : "";
 	const command = `chmod ${flag} ${mode.toString(8)} ${quoteShellArg(remotePath)}`;
 	return await self.shell.execute(socket, streamManager, command);
@@ -490,18 +511,24 @@ export async function diskUsage(socket, streamManager, path = "/") {
  * @param {string} path - Starting path
  * @param {string} pattern - File pattern (e.g., '*.txt')
  * @param {Object} [options={}] - Find options
- * @param {number} [options.maxDepth] - Maximum search depth
- * @param {string} [options.type] - File type (f=file, d=directory)
+ * @param {number} [options.maxDepth] - Maximum search depth (non-negative integer; 0 is valid and means the starting point only)
+ * @param {string} [options.type] - File type: one of b, c, d, p, f, l, s (see find(1))
  * @returns {Promise<string>} Find results
  */
 export async function find(socket, streamManager, path, pattern, options = {}) {
 	let command = `find ${quoteShellArg(path)}`;
 
-	if (options.maxDepth) {
+	if (options.maxDepth !== undefined) {
+		if (!Number.isInteger(options.maxDepth) || options.maxDepth < 0) {
+			throw new Error(`Invalid maxDepth: ${options.maxDepth} (must be a non-negative integer)`);
+		}
 		command += ` -maxdepth ${options.maxDepth}`;
 	}
 
-	if (options.type) {
+	if (options.type !== undefined) {
+		if (!/^[bcdpfls]$/.test(options.type)) {
+			throw new Error(`Invalid type: ${options.type} (must be one of b, c, d, p, f, l, s)`);
+		}
 		command += ` -type ${options.type}`;
 	}
 
