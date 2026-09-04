@@ -98,16 +98,16 @@ function bytesToBigIntLE(bytes) {
  * @returns {Buffer} 64-byte SHA-512 digest.
  */
 function hashPassword(password) {
-	// codeql[js/insufficient-password-hash] - not a stored credential: this is
-	// SPAKE2's ephemeral session "password" (a channel-bound pairing code),
-	// hashed exactly once per session as an input to a proper AKE protocol -
-	// never persisted, never compared directly. The wire protocol itself
-	// mandates plain SHA-512 here (confirmed directly from AOSP's
-	// pairing_auth.cpp: `SHA512(password, password_len, password_tmp);`);
-	// substituting bcrypt/scrypt/Argon2 would silently break interop with a
-	// real device, not improve security - the slow-hash threat model
-	// (offline cracking of a stored hash) doesn't apply to a value that's
-	// never written anywhere.
+	// Not a stored credential: this is SPAKE2's ephemeral session "password"
+	// (a channel-bound pairing code), hashed exactly once per session as an
+	// input to a proper AKE protocol - never persisted, never compared
+	// directly. The wire protocol itself mandates plain SHA-512 here
+	// (confirmed directly from AOSP's pairing_auth.cpp:
+	// `SHA512(password, password_len, password_tmp);`); substituting
+	// bcrypt/scrypt/Argon2 would silently break interop with a real device,
+	// not improve security - the slow-hash threat model (offline cracking of
+	// a stored hash) doesn't apply to a value that's never written anywhere.
+	// codeql[js/insufficient-password-hash]
 	return crypto.createHash("sha512").update(password).digest();
 }
 
@@ -452,14 +452,15 @@ export async function pair(host, port, pairingCode, options = {}) {
 			key,
 			minVersion: "TLSv1.3",
 			maxVersion: "TLSv1.3",
-			// codeql[js/disabling-certificate-validation] - AOSP's pairing server
-			// presents an ephemeral, unpinned cert - trust here comes from the
-			// shared pairing code via SPAKE2, not from certificate validation
-			// (confirmed: pairing_connection.cpp sets a cert-verify callback that
-			// unconditionally accepts, `SetCertVerifyCallback([](X509_STORE_CTX*)
-			// { return 1; })`). Requiring a valid cert here would just make
-			// pairing itself impossible - a compliant device has nothing for
-			// this connection to validate against yet.
+			// AOSP's pairing server presents an ephemeral, unpinned cert - trust
+			// here comes from the shared pairing code via SPAKE2, not from
+			// certificate validation (confirmed: pairing_connection.cpp sets a
+			// cert-verify callback that unconditionally accepts,
+			// `SetCertVerifyCallback([](X509_STORE_CTX*) { return 1; })`).
+			// Requiring a valid cert here would just make pairing itself
+			// impossible - a compliant device has nothing for this connection to
+			// validate against yet.
+			// codeql[js/disabling-certificate-validation]
 			rejectUnauthorized: false
 		});
 
