@@ -107,7 +107,11 @@ function hashPassword(password) {
 	// bcrypt/scrypt/Argon2 would silently break interop with a real device,
 	// not improve security - the slow-hash threat model (offline cracking of
 	// a stored hash) doesn't apply to a value that's never written anywhere.
-	// codeql[js/insufficient-password-hash]
+	// CodeQL flags this as js/insufficient-password-hash - a false positive
+	// against this protocol, per the above; dismiss via the alert itself
+	// (inline `codeql[...]` suppression comments aren't respected by GitHub's
+	// hosted Code Scanning flow - confirmed against GitHub's own docs, which
+	// document only UI/API dismissal as the real mechanism).
 	return crypto.createHash("sha512").update(password).digest();
 }
 
@@ -459,8 +463,12 @@ export async function pair(host, port, pairingCode, options = {}) {
 			// `SetCertVerifyCallback([](X509_STORE_CTX*) { return 1; })`).
 			// Requiring a valid cert here would just make pairing itself
 			// impossible - a compliant device has nothing for this connection to
-			// validate against yet.
-			// codeql[js/disabling-certificate-validation]
+			// validate against yet. CodeQL flags this as
+			// js/disabling-certificate-validation - a false positive against this
+			// protocol, per the above; dismiss via the alert itself (inline
+			// `codeql[...]` suppression comments aren't respected by GitHub's
+			// hosted Code Scanning flow - confirmed against GitHub's own docs,
+			// which document only UI/API dismissal as the real mechanism).
 			rejectUnauthorized: false
 		});
 
