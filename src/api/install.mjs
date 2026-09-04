@@ -17,6 +17,13 @@
 
 import { self } from "@cldmv/slothlet/runtime";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
+
+// Chunk size for stdin writes on the exec:cmd stream. Not protocol-mandated -
+// ADB streams are otherwise unbounded per WRTE frame - but kept aligned with
+// the SYNC sub-protocol's own 64KB DATA ceiling (files.mjs) for consistency
+// and to stay safely under every known device max-payload negotiation.
+const EXEC_WRITE_CHUNK = 64 * 1024;
 
 /**
  * Installs a local APK using the classic push-then-install flow: pushes the
@@ -52,5 +59,55 @@ export async function classic(socket, streamManager, localPath, options = {}) {
 		await self.files.remove(socket, streamManager, remotePath).catch(() => {
 			// A failed remove here shouldn't mask the install result/error.
 		});
+	}
+}
+
+/**
+ * Installs a local APK using the modern streaming install service: opens an
+ * `exec:cmd package install -S <size>` stream and writes the raw APK bytes
+ * directly as the command's stdin over WRTE frames - no on-device file is
+ * ever written. The `-S <size>` flag tells `pm install` exactly how many
+ * stdin bytes to expect, which is what lets this work without any explicit
+ * stdin-close signal (ADB streams have no half-close). EXPERIMENTAL - this is
+ * droidsock's first use of an `exec:` stream and its first case of writing
+ * raw binary data as a command's stdin; not yet validated against a real
+ * device, and requires the device to advertise the "cmd" feature. See #2.
+ * @param {Object} ___socket - ADB socket (unused - the exec stream is opened via streamManager)
+ * @param {Object} streamManager - Stream manager instance
+ * @param {string} localPath - Local APK file path
+ * @param {Object} [options={}] - Options
+ * @param {Array<string>} [options.flags=[]] - `cmd package install` flags (e.g. ["-r"] to reinstall)
+ * @param {Function} [options.onProgress] - Progress callback, called with {bytesTransferred, totalBytes}
+ * @returns {Promise<string>} `cmd package install`'s output
+ */
+export async function streaming(___socket, streamManager, localPath, options = {}) {
+	const { flags = [], onProgress } = options;
+	const data = await readFile(localPath);
+	const flagsStr = flags.length > 0 ? ` ${flags.join(" ")}` : "";
+	const destination = `exec:cmd package install -S ${data.length}${flagsStr}`;
+
+	const stream = await streamManager.openStream(destination);
+	try {
+		let output = Buffer.alloc(0);
+		const closed = new Promise((resolve, reject) => {
+			stream.on("data", (chunk) => {
+				output = Buffer.concat([output, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+			});
+			stream.once("close", resolve);
+			stream.once("error", reject);
+		});
+
+		let offset = 0;
+		while (offset < data.length) {
+			const chunk = data.subarray(offset, Math.min(offset + EXEC_WRITE_CHUNK, data.length));
+			await stream.write(chunk);
+			offset += chunk.length;
+			if (onProgress) onProgress({ bytesTransferred: offset, totalBytes: data.length });
+		}
+
+		await closed;
+		return output.toString("utf8");
+	} finally {
+		stream.close();
 	}
 }
