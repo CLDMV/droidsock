@@ -73,8 +73,9 @@ const SYNC_DENT_HEADER_SIZE = 20; // id(4) + mode(4) + size(4) + mtime(4) + name
 // carrying `id` again plus mode/flags (send_v2) or just flags (recv_v2) - not
 // wrapped in the generic id+value+payload shape, so those are built by hand
 // (see pushV2/pullV2). `flags` is the per-transfer compression selector;
-// droidsock always sends SYNC_FLAG_NONE since it doesn't implement the
-// brotli/lz4/zstd codecs (SEND_FLAG_BROTLI/_LZ4/_ZSTD in AOSP) - see #8.
+// droidsock supports brotli (options.compression: "brotli", opt-in and off
+// by default) via Node's built-in zlib - lz4/zstd aren't implemented (they'd
+// need new dependencies) - see #8.
 //
 // STAT_V2/LIST_V2 requests are a single generic id+pathlen+path frame, same
 // shape as V1. STAT_V2's reply is a single raw fixed-size sync_stat_v2
@@ -91,6 +92,14 @@ const SYNC_ID_DENT_V2 = "DNT2";
 // follow-up) rather than implemented speculatively.
 const SYNC_FLAG_NONE = 0;
 const SYNC_FLAG_BROTLI = 1;
+// Brotli (like any general-purpose compressor) can slightly expand
+// incompressible input - the format's own worst-case overhead is a small,
+// bounded per-block amount, not a multiplicative blowup, but chunking
+// compressed input at the full SYNC_DATA_MAX would leave no margin at all
+// and risks a DATA frame that violates the protocol's 64KB ceiling. Raw
+// input for a compressed chunk is capped well below SYNC_DATA_MAX instead,
+// with an explicit check on the compressed output as a backstop.
+const SYNC_BROTLI_INPUT_MAX = 48 * 1024;
 const SYNC_SEND_V2_SETUP_SIZE = 12; // id(4) + mode(4) + flags(4)
 const SYNC_RECV_V2_SETUP_SIZE = 8; // id(4) + flags(4)
 // id(4) + error(4) + dev(8) + ino(8) + mode(4) + nlink(4) + uid(4) + gid(4) + size(8) + atime(8) + mtime(8) + ctime(8)
@@ -471,10 +480,14 @@ export async function pushV2(___socket, streamManager, localPath, remotePath, op
 		setup.writeUInt32LE(flag, 8);
 		await stream.write(setup);
 
+		const inputChunkMax = flag === SYNC_FLAG_BROTLI ? SYNC_BROTLI_INPUT_MAX : SYNC_DATA_MAX;
 		let offset = 0;
 		while (offset < data.length) {
-			const chunk = data.subarray(offset, Math.min(offset + SYNC_DATA_MAX, data.length));
+			const chunk = data.subarray(offset, Math.min(offset + inputChunkMax, data.length));
 			const wireChunk = flag === SYNC_FLAG_BROTLI ? brotliCompressSync(chunk) : chunk;
+			if (wireChunk.length > SYNC_DATA_MAX) {
+				throw new Error(`Compressed SYNC DATA chunk exceeds the protocol ceiling: ${wireChunk.length} bytes (max ${SYNC_DATA_MAX})`);
+			}
 			await stream.write(buildSyncFrame(SYNC_ID_DATA, wireChunk));
 			offset += chunk.length;
 			if (onProgress) onProgress({ bytesTransferred: offset, totalBytes: data.length });

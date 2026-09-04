@@ -13,6 +13,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import crypto from "node:crypto";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -681,6 +682,32 @@ describe("files.pushV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 		expect(stream.writes[1].readUInt32LE(8)).toBe(1); // SYNC_FLAG_BROTLI
 		const dataPayload = stream.writes[2].subarray(8);
 		expect(brotliDecompressSync(dataPayload).toString("utf8")).toBe("hello world v2");
+	});
+
+	test('compression: "brotli" chunks raw input below the 64KB SYNC_DATA_MAX, leaving headroom for brotli expansion', async () => {
+		const localFile = path.join(tmpDir, "push-v2-brotli-large.bin");
+		// Incompressible random data - brotli can slightly expand this, which is
+		// exactly the case that would overflow SYNC_DATA_MAX if raw input were
+		// chunked at the full 64KB instead of the smaller compressed-mode chunk.
+		const big = crypto.randomBytes(48 * 1024 + 10);
+		writeFileSync(localFile, big);
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				s.emit("data", buildFrame("OKAY", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2.bin", { compression: "brotli" });
+
+		const dataFrames = stream.writes.filter((w) => w.subarray(0, 4).toString("ascii") === "DATA");
+		expect(dataFrames).toHaveLength(2);
+		for (const frame of dataFrames) {
+			expect(frame.subarray(8).length).toBeLessThanOrEqual(64 * 1024);
+		}
+		const decompressed = Buffer.concat(dataFrames.map((f) => brotliDecompressSync(f.subarray(8))));
+		expect(decompressed.equals(big)).toBe(true);
 	});
 
 	test("rejects an invalid compression value without opening a stream", async () => {
