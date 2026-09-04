@@ -234,6 +234,15 @@ function encodePairingPacket(type, payload) {
 	return Buffer.concat([header, payload]);
 }
 
+// Real pairing packets are small - the largest legitimate payload is an
+// AES-128-GCM-encrypted PeerInfo (AOSP's PeerInfo::data[8191] fixed buffer +
+// the 1-byte type + the 16-byte GCM tag = 8208 bytes at most); SPAKE2_MSG
+// payloads are a fixed 32 bytes. pair() connects to an arbitrary host/port,
+// so a misbehaving or hostile peer advertising an enormous payload length
+// must be rejected before buffering, not trusted to bound how much memory
+// this allocates while waiting for the rest of a frame that may never come.
+const MAX_PACKET_PAYLOAD = 16 * 1024;
+
 /**
  * Creates a streaming PairingPacket reader: feed it raw TLS bytes as they
  * arrive via push(), and it yields complete {version, type, payload}
@@ -241,6 +250,8 @@ function encodePairingPacket(type, payload) {
  * accumulate-until-a-full-frame-exists shape stream.mjs's handlePacket()
  * uses for the classic protocol's packet framing, since TLS delivers bytes
  * as a stream with no guarantee one write() lines up with one packet.
+ * Throws if a header advertises a payload beyond MAX_PACKET_PAYLOAD, or a
+ * version other than PAIRING_PACKET_VERSION.
  * @returns {{push: (chunk: Buffer) => Array<{version: number, type: number, payload: Buffer}>}} The reader.
  */
 function createPacketReader() {
@@ -254,10 +265,18 @@ function createPacketReader() {
 			for (;;) {
 				if (buffered.length < 6) break;
 				const payloadLength = buffered.readUInt32BE(2);
+				if (payloadLength > MAX_PACKET_PAYLOAD) {
+					throw new Error(`Pairing packet payload too large: ${payloadLength} bytes (max ${MAX_PACKET_PAYLOAD})`);
+				}
 				if (buffered.length < 6 + payloadLength) break;
 
+				const version = buffered.readUInt8(0);
+				if (version !== PAIRING_PACKET_VERSION) {
+					throw new Error(`Unsupported pairing packet version: ${version} (expected ${PAIRING_PACKET_VERSION})`);
+				}
+
 				packets.push({
-					version: buffered.readUInt8(0),
+					version,
 					type: buffered.readUInt8(1),
 					payload: buffered.subarray(6, 6 + payloadLength)
 				});
@@ -299,6 +318,9 @@ function encodePeerInfo(type, data) {
  * @returns {{type: number, data: Buffer}} The decoded PeerInfo.
  */
 function decodePeerInfo(buf) {
+	if (buf.length < 1) {
+		throw new Error("PeerInfo payload is empty (expected at least a 1-byte type)");
+	}
 	return { type: buf.readUInt8(0), data: buf.subarray(1) };
 }
 
@@ -367,6 +389,21 @@ function createMessageCipher(keyMaterial) {
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
+ * Checks whether a persisted cert's embedded public key still matches the
+ * current RSA keypair - compared as the raw key material (PKCS#1 DER), not
+ * the PEM encoding, since a cert's embedded key and a standalone PEM can
+ * differ in wrapper format (PKCS#1 vs SPKI) despite being the same key.
+ * @param {string} certPem - Persisted certificate PEM.
+ * @param {string} publicKeyPem - Current RSA public key PEM (from auth.getKeys()).
+ * @returns {boolean} True if the cert's public key matches the current keypair.
+ */
+function certMatchesKey(certPem, publicKeyPem) {
+	const certPublicKey = new crypto.X509Certificate(certPem).publicKey;
+	const currentPublicKey = crypto.createPublicKey(publicKeyPem);
+	return certPublicKey.export({ type: "pkcs1", format: "der" }).equals(currentPublicKey.export({ type: "pkcs1", format: "der" }));
+}
+
+/**
  * Loads (or generates and persists) a self-signed X.509 certificate
  * wrapping droidsock's existing RSA identity, alongside the adbkey files
  * auth.getKeys() already manages. AOSP's pairing flow uses "the caller's
@@ -374,7 +411,10 @@ function createMessageCipher(keyMaterial) {
  * identity used for the classic ADB auth flow" (confirmed from
  * pairing_connection.cpp), so this wraps the SAME key rather than
  * generating a separate one, and persists the cert so repeated pairing
- * attempts present a stable identity rather than a fresh one each time.
+ * attempts present a stable identity rather than a fresh one each time. If
+ * the persisted cert wraps a different key than the current adbkey/
+ * adbkey.pub (e.g. the user regenerated the keypair), it's regenerated
+ * rather than presenting a stale identity that would fail the TLS handshake.
  * @param {Object} keys - Result of auth.getKeys() - {privateKey, publicKey}.
  * @param {string} certPath - Path to persist/load the cert PEM at.
  * @returns {Promise<{cert: string, key: string}>} TLS-ready cert + key PEM pair.
@@ -384,7 +424,10 @@ async function getOrCreatePairingCert(keys, certPath) {
 	// separate check-then-act let the file be created, removed, or replaced
 	// between the two calls (CodeQL js/file-system-race).
 	try {
-		return { cert: fs.readFileSync(certPath, "utf8"), key: keys.privateKey };
+		const cert = fs.readFileSync(certPath, "utf8");
+		if (certMatchesKey(cert, keys.publicKey)) {
+			return { cert, key: keys.privateKey };
+		}
 	} catch (error) {
 		if (error.code !== "ENOENT") throw error;
 	}

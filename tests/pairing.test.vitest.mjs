@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
@@ -124,6 +124,9 @@ function createServerCipher(keyMaterial) {
  * @param {Object} [opts] - Overrides for deliberately testing failure paths.
  * @param {boolean} [opts.wrongPassword] - Derive the server's password scalar from a different code, simulating a PIN mismatch.
  * @param {boolean} [opts.corruptPeerInfoAck] - Send back garbage instead of a valid encrypted PeerInfo ack.
+ * @param {boolean} [opts.emptyPeerInfoAck] - Send back a validly-encrypted PeerInfo ack whose plaintext is 0 bytes.
+ * @param {boolean} [opts.oversizedPayload] - Reply to the client's first packet with a header claiming an oversized payload, no payload sent.
+ * @param {boolean} [opts.wrongVersion] - Reply to the client's first packet with a header carrying an unsupported version byte.
  * @returns {Promise<{port: number, close: () => Promise<void>}>} Server handle.
  */
 async function startFakePairingServer(pairingCode, opts = {}) {
@@ -154,6 +157,24 @@ async function startFakePairingServer(pairingCode, opts = {}) {
 		socket.on("data", (chunk) => {
 			for (const packet of reader.push(chunk)) {
 				if (packet.type === PACKET_TYPE_SPAKE2_MSG) {
+					if (opts.oversizedPayload) {
+						const header = Buffer.alloc(6);
+						header.writeUInt8(1, 0);
+						header.writeUInt8(PACKET_TYPE_SPAKE2_MSG, 1);
+						header.writeUInt32BE(1024 * 1024, 2); // claims 1MB, never sends it
+						socket.write(header);
+						continue;
+					}
+					if (opts.wrongVersion) {
+						const payload = Buffer.alloc(32);
+						const header = Buffer.alloc(6);
+						header.writeUInt8(99, 0); // bogus version
+						header.writeUInt8(PACKET_TYPE_SPAKE2_MSG, 1);
+						header.writeUInt32BE(payload.length, 2);
+						socket.write(Buffer.concat([header, payload]));
+						continue;
+					}
+
 					const clientMsg = packet.payload;
 
 					const ephemeralPublic = Point.BASE.multiply(ephemeralScalar);
@@ -183,7 +204,9 @@ async function startFakePairingServer(pairingCode, opts = {}) {
 					}
 					const ackPayload = opts.corruptPeerInfoAck
 						? crypto.randomBytes(32)
-						: cipher.encrypt(Buffer.concat([Buffer.from([1]), Buffer.from("fake-device-guid", "utf8")]));
+						: opts.emptyPeerInfoAck
+							? cipher.encrypt(Buffer.alloc(0))
+							: cipher.encrypt(Buffer.concat([Buffer.from([1]), Buffer.from("fake-device-guid", "utf8")]));
 					socket.write(encodePairingPacket(PACKET_TYPE_PEER_INFO, ackPayload));
 				}
 			}
@@ -247,6 +270,58 @@ describe("pairing.pair", () => {
 
 	test("rejects a non-positive timeoutMs", async () => {
 		await expect(droidsock.pairing.pair("127.0.0.1", 12345, "123456", { keyDir: tmpKeyDir, timeoutMs: 0 })).rejects.toThrow(/timeoutMs/);
+	});
+
+	test("rejects a packet header advertising an oversized payload rather than buffering it unbounded", async () => {
+		server = await startFakePairingServer("123456", { oversizedPayload: true });
+		await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir: tmpKeyDir, timeoutMs: 2000 })).rejects.toThrow(
+			/payload too large/
+		);
+	});
+
+	test("rejects a packet with an unsupported version byte", async () => {
+		server = await startFakePairingServer("123456", { wrongVersion: true });
+		await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir: tmpKeyDir, timeoutMs: 2000 })).rejects.toThrow(
+			/[Uu]nsupported pairing packet version/
+		);
+	});
+
+	test("rejects a PeerInfo payload that decrypts to 0 bytes with a clear error, not a raw RangeError", async () => {
+		server = await startFakePairingServer("123456", { emptyPeerInfoAck: true });
+		await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir: tmpKeyDir, timeoutMs: 2000 })).rejects.toThrow(
+			/PeerInfo payload is empty/
+		);
+	});
+
+	test("regenerates the persisted pairing cert when the RSA keypair changes", async () => {
+		const keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-pairing-cert-test-"));
+		try {
+			droidsock.auth.generateKeys(2048, keyDir);
+			const keysBefore = droidsock.auth.getKeys(keyDir);
+
+			server = await startFakePairingServer("123456");
+			await droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir });
+			const certPath = path.join(keyDir, "adbkey.cert.pem");
+			const certBefore = readFileSync(certPath, "utf8");
+			await server.close();
+			server = undefined;
+
+			// Simulate the user regenerating their RSA identity - overwrite
+			// adbkey/adbkey.pub, leaving the old cert (wrapping the old key) in place.
+			rmSync(path.join(keyDir, "adbkey"));
+			rmSync(path.join(keyDir, "adbkey.pub"));
+			droidsock.auth.generateKeys(2048, keyDir);
+			const keysAfter = droidsock.auth.getKeys(keyDir);
+			expect(keysAfter.publicKey).not.toBe(keysBefore.publicKey);
+
+			server = await startFakePairingServer("123456");
+			await droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir });
+
+			const certAfter = readFileSync(certPath, "utf8");
+			expect(certAfter).not.toBe(certBefore);
+		} finally {
+			rmSync(keyDir, { recursive: true, force: true });
+		}
 	});
 
 	test("times out when nothing answers", async () => {
