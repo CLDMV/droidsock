@@ -123,13 +123,16 @@ export function create(socket) {
 					self.log.debug(`${self.config.get("debugArrowReceived")} ${commandName} arg0:${arg0} arg1:${arg1} len:${dataLength}`);
 				}
 
-				if (command === MSG_OPEN) {
+				if (command === MSG_OPEN && arg1 === 0) {
 					// Device-initiated: the far side is opening a NEW stream to us
 					// (e.g. a peer connected to a device port that's registered via
 					// `reverse:forward:`), not replying to something we opened -
 					// arg0 is the device's own stream id for it, arg1 is always 0
 					// (the device has no local id of ours to reference yet). Mint
-					// one, ack it, and hand it to whoever's listening.
+					// one, ack it, and hand it to whoever's listening. A non-zero
+					// arg1 on an OPEN isn't a shape the protocol defines - falls
+					// through to normal per-stream routing below instead of being
+					// misclassified as a new stream.
 					const remoteId = arg0;
 					const destination = packetData.toString("utf8");
 					const localId = nextStreamId++;

@@ -68,8 +68,36 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 
 		const localSocket = net.connect(hostPort, host);
 		let localSocketFailed = false;
+		let localSocketConnected = false;
+		// The device already received the OKAY for this stream (sent
+		// synchronously before "remoteOpen" fires) and may write to it before
+		// this local TCP connect completes. AdbStream is a plain EventEmitter
+		// with no buffering, so a "data" listener attached only inside the
+		// "connect" callback below would silently drop anything the device
+		// sent in that window - attach listeners immediately instead, and
+		// queue device->host bytes until the local socket is actually up.
+		const pendingDeviceData = [];
+
+		deviceStream.on("data", (data) => {
+			if (localSocketConnected) {
+				localSocket.write(data);
+			} else {
+				pendingDeviceData.push(data);
+			}
+		});
+		deviceStream.on("close", () => {
+			if (localSocketConnected) localSocket.end();
+			else localSocket.destroy();
+		});
+		deviceStream.on("error", (error) => {
+			deviceStream.close();
+			localSocket.destroy();
+			if (onError) onError(error, deviceStream);
+		});
+
 		localSocket.on("error", (error) => {
 			localSocketFailed = true;
+			localSocket.destroy();
 			deviceStream.close();
 			if (onError) onError(error, deviceStream);
 		});
@@ -80,13 +108,9 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 				return;
 			}
 
-			deviceStream.on("data", (data) => localSocket.write(data));
-			deviceStream.on("close", () => localSocket.end());
-			deviceStream.on("error", (error) => {
-				deviceStream.close();
-				localSocket.destroy();
-				if (onError) onError(error, deviceStream);
-			});
+			localSocketConnected = true;
+			for (const data of pendingDeviceData) localSocket.write(data);
+			pendingDeviceData.length = 0;
 
 			localSocket.on("data", (data) => {
 				deviceStream.write(data).catch((error) => {
