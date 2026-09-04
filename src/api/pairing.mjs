@@ -23,21 +23,18 @@
  * trust store - the same trust store the classic flow's "Allow this
  * computer?" tap populates, just automated via the shared PIN instead.
  *
- * EXPERIMENTAL, more so than the rest of droidsock's protocol work: built
- * directly from AOSP's own pairing source (platform/packages/modules/adb -
- * pairing_auth/, pairing_connection/, tls/) and BoringSSL's SPAKE2-over-
- * edwards25519 implementation (crypto/curve25519/spake25519.cc), cross-
- * checked across multiple independent reads of each file. The SPAKE2
- * exchange itself (curve, M/N mask constants, password-scalar derivation,
- * key-derivation transcript order) is precisely confirmed this way. A
- * handful of narrower implementation details could not be pinned down to
- * the exact byte from public source alone - each is called out at its
- * definition below, distinct from the general "not yet validated against a
- * real device" caveat every other protocol feature here carries: those
- * three are collectively "would this design work"; the flagged constants
- * here are "is this literal byte value right," which no amount of local
- * testing can confirm without a real pairing session to fail against.
- * Tracked by #1 same as everything else.
+ * EXPERIMENTAL, same as the rest of droidsock's protocol work, but built
+ * with unusually direct sourcing: every constant and structural detail here
+ * - the curve, the M/N mask points, password-scalar derivation, the
+ * key-derivation transcript order, the PairingPacketHeader layout and its
+ * version byte, the PeerInfo struct, and the AES-128-GCM cipher's key
+ * derivation and nonce construction - is confirmed directly from AOSP's own
+ * pairing source (platform/packages/modules/adb - pairing_auth/,
+ * pairing_connection/, tls/) and BoringSSL's SPAKE2-over-edwards25519
+ * implementation (crypto/curve25519/spake25519.cc), cross-checked across
+ * multiple independent reads of each file. Not yet run against a real
+ * device - tracked by #1 same as everything else - but that's the only gap
+ * left; nothing here is a guessed byte value.
  */
 
 import tls from "node:tls";
@@ -202,11 +199,9 @@ function deriveSessionKey({ clientMsg, serverMsg, dhShared, passwordHash }, keyL
 // byte order)}, confirmed directly - 6 bytes total, big-endian length).
 // ─────────────────────────────────────────────────────────────────────────
 
-// UNCONFIRMED: the literal version byte a real device expects wasn't
-// findable in the public header/source read for this - `1` is the
-// conventional default for a protocol's first version, not a confirmed
-// AOSP constant. If a real pairing session rejects the packet outright,
-// this is the first thing to check.
+// Confirmed directly: pairing_connection.cpp defines
+// `const uint8_t kCurrentKeyHeaderVersion = 1;` and uses it to populate
+// every outgoing PairingPacketHeader's version field.
 const PAIRING_PACKET_VERSION = 1;
 const PACKET_TYPE_SPAKE2_MSG = 0;
 const PACKET_TYPE_PEER_INFO = 1;
@@ -295,22 +290,15 @@ function decodePeerInfo(buf) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // AES-128-GCM message cipher for the PEER_INFO exchange. Source:
-// pairing_auth/aes_128_gcm.cpp (confirmed: AES-128, 12-byte nonce, 16-byte
-// tag, key derived from the SPAKE2 key material via HKDF-SHA256, separate
-// incrementing sequence-number-based nonces per direction).
+// pairing_auth/aes_128_gcm.cpp and its header (confirmed: AES-128, 12-byte
+// nonce, 16-byte tag, key derived from the SPAKE2 key material via
+// HKDF-SHA256). The header confirms enc_sequence_/dec_sequence_ are each a
+// `uint64_t = 0` - an 8-byte little-endian counter starting at 0, matching
+// exactly what's implemented below.
 // ─────────────────────────────────────────────────────────────────────────
 
-// UNCONFIRMED: the exact HKDF "info" context bytes - a web-fetch summarizer
-// declined to reproduce the literal string from aes_128_gcm.cpp on
-// copyright grounds, so this is a placeholder, not a sourced constant. Also
-// unconfirmed: enc_sequence_/dec_sequence_'s exact integer width and
-// starting value - implemented here as an 8-byte little-endian counter
-// starting at 0 (the standard/expected choice given everything else that
-// WAS confirmed: 12-byte nonce, a "sequence number copied into the nonce,
-// incrementing per call" description). Since this protocol's PEER_INFO
-// exchange is a single message per direction, nonce=0 for both sides'
-// first (only) use is the only value that actually matters here.
-const AES_KEY_INFO = Buffer.from("adb pairing aes key", "utf8");
+// Confirmed directly from aes_128_gcm.cpp's HKDF call.
+const AES_KEY_INFO = Buffer.from("adb pairing_auth aes-128-gcm key", "utf8");
 
 /**
  * Derives the 16-byte AES-128-GCM key from raw SPAKE2 key material via

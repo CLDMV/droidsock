@@ -91,7 +91,9 @@ function createPacketReader() {
 }
 
 function createServerCipher(keyMaterial) {
-	const key = Buffer.from(crypto.hkdfSync("sha256", keyMaterial, Buffer.alloc(0), Buffer.from("adb pairing aes key", "utf8"), 16));
+	const key = Buffer.from(
+		crypto.hkdfSync("sha256", keyMaterial, Buffer.alloc(0), Buffer.from("adb pairing_auth aes-128-gcm key", "utf8"), 16)
+	);
 	let encSequence = 0n;
 	let decSequence = 0n;
 	const nonceFor = (sequence) => {
