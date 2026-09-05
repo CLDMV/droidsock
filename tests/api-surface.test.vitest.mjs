@@ -28,7 +28,9 @@ describe("index.mjs default export", () => {
 				"forward",
 				"install",
 				"log",
+				"pairing",
 				"reboot",
+				"reverse",
 				"shell",
 				"stream",
 				"utils"
@@ -82,6 +84,15 @@ describe("index.mjs default export", () => {
 		}
 	});
 
+	test("reverse module exposes start", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.reverse.start).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
 	test("install module exposes classic and streaming", async () => {
 		const droidsock = await createDroidSock();
 		try {
@@ -99,6 +110,15 @@ describe("index.mjs default export", () => {
 			expect(typeof droidsock.files.pullV2).toBe("function");
 			expect(typeof droidsock.files.statV2).toBe("function");
 			expect(typeof droidsock.files.listV2).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("pairing module exposes pair", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.pairing.pair).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}

@@ -165,6 +165,12 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, connection, streamMana
 			return await self.forward.start(connection.socket, streamManager, devicePort, forwardOptions);
 		},
 
+		// Reverse port forwarding (adb reverse equivalent) - see also self.reverse
+		reverse: async (devicePort, hostPort, reverseOptions = {}) => {
+			assertReady();
+			return await self.reverse.start(connection.socket, streamManager, devicePort, hostPort, reverseOptions);
+		},
+
 		// Local APK install (adb install equivalent). Tries the modern streaming
 		// install (self.install.streaming) when the device advertised the "cmd"
 		// feature during the CNXN handshake, falling back to the classic
