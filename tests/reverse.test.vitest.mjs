@@ -303,6 +303,33 @@ describe("reverse.start", () => {
 		}
 	});
 
+	test("tears down the bridge if the device floods pendingDeviceData while the local connect stalls", async () => {
+		const streamManager = createFakeStreamManager();
+		const onError = vi.fn();
+		// An unroutable TEST-NET-1 address (RFC 5737) - the local "connect"
+		// never fires, keeping this bridge permanently in the buffering phase
+		// under test.
+		const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, 5555, { host: "192.0.2.1", onError });
+		await vi.waitUntil(() => streamManager.openedStreams.length > 0);
+		streamManager.openedStreams[0].emit("data", Buffer.from("OKAY"));
+		await startPromise;
+
+		const deviceStream = streamManager.registerDeviceStream(createFakeAdbStream());
+		const localListenerAttached = onceEvent(deviceStream, "newListener");
+		streamManager.emit("remoteOpen", deviceStream, "tcp:5555");
+		await localListenerAttached;
+
+		// Flood past the 1MB cap while the local connect is still (and will
+		// remain) pending - destroying the local socket as part of tearing
+		// down aborts the in-flight connect attempt immediately.
+		const chunk = Buffer.alloc(64 * 1024, 0x41);
+		for (let i = 0; i < 17; i++) deviceStream.emit("data", chunk); // 17 * 64KB > 1MB
+
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(onError.mock.calls[0][0].message).toMatch(/stalled while buffering/);
+		expect(streamManager.closeStream).toHaveBeenCalledWith(deviceStream.localId);
+	});
+
 	test("ignores a remoteOpen tagged for a different hostPort - another reverse() call owns it", async () => {
 		const streamManager = createFakeStreamManager();
 		const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, 8000);

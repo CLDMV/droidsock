@@ -17,6 +17,15 @@
 
 import net from "node:net";
 
+// Bridging a device-initiated connection buffers device->host bytes only
+// during the brief window while the local TCP connect is in flight -
+// normally near-instant. If that connect stalls (e.g. a SYN blackhole) while
+// the device keeps sending, buffering with no ceiling would grow unbounded
+// and exhaust host memory. 1MB is comfortably more than any real bridging
+// handshake needs to buffer before the connect either succeeds or this is
+// treated as a stalled/failed target.
+const MAX_PENDING_DEVICE_DATA = 1024 * 1024;
+
 /**
  * Parses a classic ADB host-service ack from a `WRTE` payload - the literal
  * 4 bytes `"OKAY"` for success, or `"FAIL"` followed by a 4-hex-digit length
@@ -88,6 +97,7 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 		// sent in that window - attach listeners immediately instead, and
 		// queue device->host bytes until the local socket is actually up.
 		const pendingDeviceData = [];
+		let pendingDeviceDataBytes = 0;
 
 		// streamManager.closeStream() (not deviceStream.close()) so the stream
 		// manager also drops its registry entry - same pattern as
@@ -106,9 +116,23 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 			if (localSocketFailed) return;
 			if (localSocketConnected) {
 				localSocket.write(data);
-			} else {
-				pendingDeviceData.push(data);
+				return;
 			}
+			pendingDeviceDataBytes += data.length;
+			if (pendingDeviceDataBytes > MAX_PENDING_DEVICE_DATA) {
+				// The local connect has stalled (or the device is sending far
+				// faster than a real bridging handshake would need) - give up on
+				// this bridge rather than buffering without bound.
+				const error = new Error(
+					`Local connect for reverse bridge tcp:${devicePort} -> tcp:${hostPort} stalled while buffering ${pendingDeviceDataBytes} bytes of device data (max ${MAX_PENDING_DEVICE_DATA})`
+				);
+				localSocketFailed = true;
+				localSocket.destroy();
+				closeDeviceStream();
+				if (onError) onError(error, deviceStream);
+				return;
+			}
+			pendingDeviceData.push(data);
 		});
 		deviceStream.on("close", () => {
 			closeDeviceStream();
