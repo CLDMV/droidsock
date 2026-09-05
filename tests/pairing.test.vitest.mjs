@@ -213,7 +213,14 @@ async function startFakePairingServer(pairingCode, opts = {}) {
 		});
 	});
 
-	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	await new Promise((resolve, reject) => {
+		// Without this, a listen() failure (e.g. EADDRNOTAVAIL) would leave the
+		// promise pending forever instead of rejecting - the test would hang
+		// until the runner's own timeout, rather than failing fast with the
+		// real error.
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
 
 	return {
 		port: server.address().port,
@@ -236,8 +243,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-	rmSync(tmpKeyDir, { recursive: true, force: true });
-	if (droidsock.shutdown) await droidsock.shutdown();
+	// Guarded - if beforeAll() threw before tmpKeyDir/droidsock were assigned,
+	// an unguarded rmSync(undefined, ...) or droidsock.shutdown would throw
+	// its own TypeError here and mask the real beforeAll failure.
+	if (tmpKeyDir) rmSync(tmpKeyDir, { recursive: true, force: true });
+	if (droidsock?.shutdown) await droidsock.shutdown();
 });
 
 describe("pairing.pair", () => {

@@ -477,7 +477,7 @@ async function getOrCreatePairingCert(keys, certPath) {
  * @param {string} pairingCode - The 6-digit pairing code displayed on the device.
  * @param {Object} [options={}] - Options.
  * @param {string} [options.keyDir] - Directory for RSA keys/cert (default: ~/.adb, same as auth.getKeys()).
- * @param {number} [options.timeoutMs=10000] - Overall pairing timeout.
+ * @param {number} [options.timeoutMs=10000] - Timeout for the TLS connection and SPAKE2/PeerInfo exchange - the timer starts once the RSA keypair and pairing cert are already loaded/generated, so it does NOT bound that preflight key/cert I/O (typically fast, but can take longer on a first run with no existing keys to load).
  * @returns {Promise<{success: boolean}>} Pairing result.
  */
 export async function pair(host, port, pairingCode, options = {}) {
