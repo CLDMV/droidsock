@@ -139,7 +139,8 @@ function buildDentV2Frame({
 	nlink = 1,
 	uid = 0,
 	gid = 0,
-	name
+	name,
+	namelenOverride
 }) {
 	const nameBuf = Buffer.from(name, "utf8");
 	const buf = Buffer.alloc(76);
@@ -155,7 +156,11 @@ function buildDentV2Frame({
 	buf.writeBigInt64LE(BigInt(atime), 48);
 	buf.writeBigInt64LE(BigInt(mtime), 56);
 	buf.writeBigInt64LE(BigInt(ctime), 64);
-	buf.writeUInt32LE(nameBuf.length, 72);
+	// namelenOverride lets a test claim a namelen that doesn't match the actual
+	// name bytes sent - simulating a malformed/hostile device for the
+	// oversized-namelen rejection test, without needing to actually send
+	// however many bytes the claimed length says.
+	buf.writeUInt32LE(namelenOverride ?? nameBuf.length, 72);
 	return Buffer.concat([buf, nameBuf]);
 }
 
@@ -885,6 +890,25 @@ describe("files.pullV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 			"Sync stream ended before a terminal frame arrived"
 		);
 	});
+
+	test("rejects a brotli chunk that decompresses past the output cap instead of allocating unbounded memory", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-brotli-bomb.bin");
+		// Highly compressible input - a small compressed payload that expands
+		// well past the 64KB SYNC_DATA_MAX cap, simulating a decompression bomb
+		// from a malformed/hostile device.
+		const bomb = brotliCompressSync(Buffer.alloc(200 * 1024, 0));
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				s.emit("data", buildFrame("DATA", bomb));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(
+			droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile, { compression: "brotli" })
+		).rejects.toThrow(/decompressed past the \d+-byte cap - rejecting as a likely decompression bomb/);
+	});
 });
 
 describe("files.statV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated against a real device)", () => {
@@ -1007,6 +1031,25 @@ describe("files.listV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 
 		await expect(droidsock.files.listV2(fakeSocket, streamManager, "/sdcard")).rejects.toThrow(
 			"Sync stream ended before enough bytes arrived"
+		);
+	});
+
+	test("rejects a DNT2 entry claiming an oversized namelen instead of buffering forever waiting for it", async () => {
+		// A malformed/hostile device could set namelen (a plain uint32, no
+		// protocol-defined ceiling) arbitrarily large - readBytes(namelen) would
+		// then wait indefinitely for that many bytes to arrive, growing the
+		// reader's internal buffer without bound. The rejection must happen
+		// before any name bytes are read, so the real (small) name below is
+		// never actually sent - only the oversized claimed length is.
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("data", buildDentV2Frame({ mode: 0o100644, size: 1n, name: "x", namelenOverride: 10 * 1024 * 1024 }));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.listV2(fakeSocket, streamManager, "/sdcard")).rejects.toThrow(
+			"list_v2 entry name length 10485760 exceeds the maximum of 4096"
 		);
 	});
 });

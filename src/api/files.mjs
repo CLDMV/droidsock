@@ -115,6 +115,21 @@ const SYNC_RECV_V2_SETUP_SIZE = 8; // id(4) + flags(4)
 const SYNC_STAT_V2_SIZE = 72;
 // Same fields as stat_v2 minus `id` (already consumed to identify the frame as DNT2) plus a trailing namelen(4).
 const SYNC_DENT_V2_TAIL_SIZE = 72;
+// namelen is a device-controlled 32-bit field with no protocol-defined
+// ceiling - a malformed or hostile device could set it arbitrarily large,
+// and createRawByteReader.readBytes() would then buffer incoming stream data
+// indefinitely while waiting for that many bytes to arrive. Real filesystem
+// entry names are far smaller than this (Linux NAME_MAX is 255 bytes); this
+// cap is intentionally generous headroom rather than a strict filesystem
+// limit, since it only needs to rule out pathological/hostile values.
+const SYNC_MAX_NAME_LEN = 4096;
+// Brotli decompression output size has no protocol-defined ceiling either -
+// a crafted/hostile compressed DATA payload could expand far beyond what any
+// legitimate chunk would produce. Real chunks are compressed from at most
+// SYNC_DATA_MAX bytes of input (see SYNC_BROTLI_INPUT_MAX above), so capping
+// decompressed output at SYNC_DATA_MAX rejects a decompression bomb without
+// constraining any legitimate transfer.
+const SYNC_BROTLI_OUTPUT_MAX = SYNC_DATA_MAX;
 const S_IFMT = 0o170000;
 const S_IFDIR = 0o040000;
 const S_IFREG = 0o100000;
@@ -397,6 +412,9 @@ function createListV2FrameReader(stream) {
 
 			if (id === SYNC_ID_DENT_V2) {
 				const tail = parseDentV2Tail(await raw.readBytes(SYNC_DENT_V2_TAIL_SIZE));
+				if (tail.namelen > SYNC_MAX_NAME_LEN) {
+					throw new Error(`list_v2 entry name length ${tail.namelen} exceeds the maximum of ${SYNC_MAX_NAME_LEN}`);
+				}
 				const name = (await raw.readBytes(tail.namelen)).toString("utf8");
 				return { id, ...tail, name };
 			}
@@ -637,7 +655,20 @@ export async function pullV2(___socket, streamManager, remotePath, localPath, op
 			for (;;) {
 				const frame = await reader.next();
 				if (frame.id === SYNC_ID_DATA) {
-					const chunk = flag === SYNC_FLAG_BROTLI ? await brotliDecompressAsync(frame.payload) : frame.payload;
+					let chunk = frame.payload;
+					if (flag === SYNC_FLAG_BROTLI) {
+						try {
+							chunk = await brotliDecompressAsync(frame.payload, { maxOutputLength: SYNC_BROTLI_OUTPUT_MAX });
+						} catch (decompressError) {
+							if (decompressError.code === "ERR_BUFFER_TOO_LARGE") {
+								throw new Error(
+									`recv_v2 brotli chunk decompressed past the ${SYNC_BROTLI_OUTPUT_MAX}-byte cap - rejecting as a likely decompression bomb`,
+									{ cause: decompressError }
+								);
+							}
+							throw decompressError;
+						}
+					}
 					await fileHandle.write(chunk);
 					bytesTransferred += frame.payload.length;
 					if (onProgress) onProgress({ bytesTransferred });
