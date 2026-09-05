@@ -17,7 +17,19 @@
 
 import { self } from "@cldmv/slothlet/runtime";
 import { parseListing, quoteShellArg } from "./utils.mjs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, open, rename, unlink } from "node:fs/promises";
+import { brotliCompress, brotliDecompress } from "node:zlib";
+import { promisify } from "node:util";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+
+// Promisified rather than the *Sync variants - brotli compression/decompression
+// of a 48-64KB chunk is real CPU work, and running it synchronously on the
+// main thread once per chunk would block the event loop (stalling unrelated
+// concurrent streams/timers) for the duration of a large multi-chunk
+// transfer. The async form offloads the work to libuv's threadpool.
+const brotliCompressAsync = promisify(brotliCompress);
+const brotliDecompressAsync = promisify(brotliDecompress);
 
 /**
  * Validates a POSIX file mode before it's interpolated (via `.toString(8)`)
@@ -61,6 +73,65 @@ const SYNC_ID_FAIL = "FAIL";
 const SYNC_ID_QUIT = "QUIT";
 const SYNC_DATA_MAX = 64 * 1024; // protocol ceiling per DATA chunk
 const SYNC_DENT_HEADER_SIZE = 20; // id(4) + mode(4) + size(4) + mtime(4) + namelen(4)
+
+// SYNC V2 (64-bit) variants - see #8. Confirmed against AOSP's own
+// file_sync_protocol.h: only the per-transfer SETUP/REQUEST frames get new
+// V2-specific ids (below); the DATA/DONE/OKAY/FAIL/QUIT tail of a transfer is
+// byte-for-byte identical to the V1 shapes above and is reused unchanged.
+//
+// SEND_V2/RECV_V2 requests are two frames: a generic id+pathlen+path frame
+// (built with buildSyncFrame, same as V1), then a *raw* fixed-size struct
+// carrying `id` again plus mode/flags (send_v2) or just flags (recv_v2) - not
+// wrapped in the generic id+value+payload shape, so those are built by hand
+// (see pushV2/pullV2). `flags` is the per-transfer compression selector;
+// droidsock supports brotli (options.compression: "brotli", opt-in and off
+// by default) via Node's built-in zlib - lz4/zstd aren't implemented (they'd
+// need new dependencies) - see #8.
+//
+// STAT_V2/LIST_V2 requests are a single generic id+pathlen+path frame, same
+// shape as V1. STAT_V2's reply is a single raw fixed-size sync_stat_v2
+// struct (not the generic shape either). LIST_V2's DENT_V2 entries are a raw
+// fixed-size header + name bytes (like V1's DENT, just with 64-bit fields),
+// terminated by a generic DONE frame exactly like V1's LIST.
+const SYNC_ID_SEND_V2 = "SND2";
+const SYNC_ID_RECV_V2 = "RCV2";
+const SYNC_ID_STAT_V2 = "STA2";
+const SYNC_ID_LIST_V2 = "LIS2";
+const SYNC_ID_DENT_V2 = "DNT2";
+// AOSP SyncFlag enum (transport.cpp) - only kSyncFlagNone/kSyncFlagBrotli are
+// used here; lz4/zstd need new dependencies and are tracked separately (#8
+// follow-up) rather than implemented speculatively.
+const SYNC_FLAG_NONE = 0;
+const SYNC_FLAG_BROTLI = 1;
+// Brotli (like any general-purpose compressor) can slightly expand
+// incompressible input - the format's own worst-case overhead is a small,
+// bounded per-block amount, not a multiplicative blowup, but chunking
+// compressed input at the full SYNC_DATA_MAX would leave no margin at all
+// and risks a DATA frame that violates the protocol's 64KB ceiling. Raw
+// input for a compressed chunk is capped well below SYNC_DATA_MAX instead,
+// with an explicit check on the compressed output as a backstop.
+const SYNC_BROTLI_INPUT_MAX = 48 * 1024;
+const SYNC_SEND_V2_SETUP_SIZE = 12; // id(4) + mode(4) + flags(4)
+const SYNC_RECV_V2_SETUP_SIZE = 8; // id(4) + flags(4)
+// id(4) + error(4) + dev(8) + ino(8) + mode(4) + nlink(4) + uid(4) + gid(4) + size(8) + atime(8) + mtime(8) + ctime(8)
+const SYNC_STAT_V2_SIZE = 72;
+// Same fields as stat_v2 minus `id` (already consumed to identify the frame as DNT2) plus a trailing namelen(4).
+const SYNC_DENT_V2_TAIL_SIZE = 72;
+// namelen is a device-controlled 32-bit field with no protocol-defined
+// ceiling - a malformed or hostile device could set it arbitrarily large,
+// and createRawByteReader.readBytes() would then buffer incoming stream data
+// indefinitely while waiting for that many bytes to arrive. Real filesystem
+// entry names are far smaller than this (Linux NAME_MAX is 255 bytes); this
+// cap is intentionally generous headroom rather than a strict filesystem
+// limit, since it only needs to rule out pathological/hostile values.
+const SYNC_MAX_NAME_LEN = 4096;
+// Brotli decompression output size has no protocol-defined ceiling either -
+// a crafted/hostile compressed DATA payload could expand far beyond what any
+// legitimate chunk would produce. Real chunks are compressed from at most
+// SYNC_DATA_MAX bytes of input (see SYNC_BROTLI_INPUT_MAX above), so capping
+// decompressed output at SYNC_DATA_MAX rejects a decompression bomb without
+// constraining any legitimate transfer.
+const SYNC_BROTLI_OUTPUT_MAX = SYNC_DATA_MAX;
 const S_IFMT = 0o170000;
 const S_IFDIR = 0o040000;
 const S_IFREG = 0o100000;
@@ -87,6 +158,13 @@ function buildSyncFrame(id, valueOrPayload) {
  * Wraps an opened sync stream with a pull-based frame reader that buffers
  * incoming chunks and reassembles complete SYNC frames (id + value + payload)
  * regardless of how the underlying WRTE data happens to be chunked.
+ *
+ * If the stream closes or errors before a terminal frame (OKAY/DONE/FAIL)
+ * arrives (a real disconnect or protocol error), a pending/future next()
+ * rejects instead of waiting forever - same handling as
+ * createListFrameReader()/createRawByteReader(), which this reader had
+ * lacked (push()/pull()/pushV2()/pullV2() could otherwise hang indefinitely
+ * on a mid-transfer disconnect).
  * @param {Object} stream - An ADB stream already opened to "sync:".
  * @returns {{ next: () => Promise<{id: string, value: number, payload: Buffer}> }} Frame reader.
  */
@@ -94,6 +172,7 @@ function createSyncFrameReader(stream) {
 	let buffer = Buffer.alloc(0);
 	const pending = [];
 	let waiter = null;
+	let endError = null;
 
 	function drain() {
 		while (buffer.length >= 8) {
@@ -105,9 +184,19 @@ function createSyncFrameReader(stream) {
 			pending.push({ id, value, payload });
 		}
 		if (pending.length > 0 && waiter) {
-			const resolve = waiter;
+			const resolve = waiter.resolve;
 			waiter = null;
 			resolve();
+		}
+	}
+
+	function endWith(error) {
+		if (endError) return;
+		endError = error || new Error("Sync stream ended before a terminal frame arrived");
+		if (waiter) {
+			const reject = waiter.reject;
+			waiter = null;
+			reject(endError);
 		}
 	}
 
@@ -115,12 +204,15 @@ function createSyncFrameReader(stream) {
 		buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
 		drain();
 	});
+	stream.on("close", () => endWith());
+	stream.on("error", (error) => endWith(error));
 
 	return {
 		async next() {
 			while (pending.length === 0) {
-				await new Promise((resolve) => {
-					waiter = resolve;
+				if (endError) throw endError;
+				await new Promise((resolve, reject) => {
+					waiter = { resolve, reject };
 				});
 			}
 			return pending.shift();
@@ -211,6 +303,146 @@ function createListFrameReader(stream) {
 }
 
 /**
+ * Wraps an opened sync stream with a raw byte-accumulating reader, for the V2
+ * SYNC replies (sync_stat_v2 / sync_dent_v2) that are fixed-size structs sent
+ * directly on the wire rather than the generic id+value+payload frame shape
+ * the V1 readers above expect. Same close/error-before-enough-bytes handling
+ * as createListFrameReader, so a truncated reply rejects instead of hanging.
+ * @param {Object} stream - An ADB stream already opened to "sync:".
+ * @returns {{ readBytes: (size: number) => Promise<Buffer> }} Raw byte reader.
+ */
+function createRawByteReader(stream) {
+	let buffer = Buffer.alloc(0);
+	const waiters = [];
+	let endError = null;
+
+	function drain() {
+		while (waiters.length > 0 && buffer.length >= waiters[0].size) {
+			const { size, resolve } = waiters.shift();
+			resolve(Buffer.from(buffer.subarray(0, size)));
+			buffer = buffer.subarray(size);
+		}
+	}
+
+	function endWith(error) {
+		if (endError) return;
+		endError = error || new Error("Sync stream ended before enough bytes arrived");
+		while (waiters.length > 0) {
+			waiters.shift().reject(endError);
+		}
+	}
+
+	stream.on("data", (chunk) => {
+		buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+		drain();
+	});
+	stream.on("close", () => endWith());
+	stream.on("error", (error) => endWith(error));
+
+	return {
+		readBytes(size) {
+			if (endError && buffer.length < size) return Promise.reject(endError);
+			return new Promise((resolve, reject) => {
+				waiters.push({ size, resolve, reject });
+				drain();
+			});
+		}
+	};
+}
+
+/**
+ * Parses a raw sync_stat_v2 struct (see SYNC_STAT_V2_SIZE), including the
+ * leading 4-byte id.
+ * @param {Buffer} buf - Exactly SYNC_STAT_V2_SIZE bytes.
+ * @returns {{id: string, error: number, dev: bigint, ino: bigint, mode: number, nlink: number, uid: number, gid: number, size: bigint, atime: bigint, mtime: bigint, ctime: bigint}} Parsed record.
+ */
+function parseStatV2Record(buf) {
+	return {
+		id: buf.toString("ascii", 0, 4),
+		error: buf.readUInt32LE(4),
+		dev: buf.readBigUInt64LE(8),
+		ino: buf.readBigUInt64LE(16),
+		mode: buf.readUInt32LE(24),
+		nlink: buf.readUInt32LE(28),
+		uid: buf.readUInt32LE(32),
+		gid: buf.readUInt32LE(36),
+		size: buf.readBigUInt64LE(40),
+		atime: buf.readBigInt64LE(48),
+		mtime: buf.readBigInt64LE(56),
+		ctime: buf.readBigInt64LE(64)
+	};
+}
+
+/**
+ * Parses the fixed-size tail of a sync_dent_v2 struct (everything after the
+ * already-consumed leading id) - see SYNC_DENT_V2_TAIL_SIZE. The variable-
+ * length name that follows (namelen bytes) is read separately by the caller.
+ * @param {Buffer} buf - Exactly SYNC_DENT_V2_TAIL_SIZE bytes.
+ * @returns {{error: number, dev: bigint, ino: bigint, mode: number, nlink: number, uid: number, gid: number, size: bigint, atime: bigint, mtime: bigint, ctime: bigint, namelen: number}} Parsed record (minus id/name).
+ */
+function parseDentV2Tail(buf) {
+	return {
+		error: buf.readUInt32LE(0),
+		dev: buf.readBigUInt64LE(4),
+		ino: buf.readBigUInt64LE(12),
+		mode: buf.readUInt32LE(20),
+		nlink: buf.readUInt32LE(24),
+		uid: buf.readUInt32LE(28),
+		gid: buf.readUInt32LE(32),
+		size: buf.readBigUInt64LE(36),
+		atime: buf.readBigInt64LE(44),
+		mtime: buf.readBigInt64LE(52),
+		ctime: buf.readBigInt64LE(60),
+		namelen: buf.readUInt32LE(68)
+	};
+}
+
+/**
+ * Wraps an opened sync stream with a reader for LIST_V2 responses: repeated
+ * raw sync_dent_v2 records (fixed tail + variable-length name), terminated by
+ * a generic DONE frame (or FAIL) in the same shape V1's LIST uses. Same
+ * stream-ended-before-DONE/FAIL rejection behavior as createListFrameReader.
+ * @param {Object} stream - An ADB stream already opened to "sync:".
+ * @returns {{ next: () => Promise<Object> }} Frame reader.
+ */
+function createListV2FrameReader(stream) {
+	const raw = createRawByteReader(stream);
+	return {
+		async next() {
+			const idBuf = await raw.readBytes(4);
+			const id = idBuf.toString("ascii");
+
+			if (id === SYNC_ID_DENT_V2) {
+				const tail = parseDentV2Tail(await raw.readBytes(SYNC_DENT_V2_TAIL_SIZE));
+				if (tail.namelen > SYNC_MAX_NAME_LEN) {
+					throw new Error(`list_v2 entry name length ${tail.namelen} exceeds the maximum of ${SYNC_MAX_NAME_LEN}`);
+				}
+				const name = (await raw.readBytes(tail.namelen)).toString("utf8");
+				return { id, ...tail, name };
+			}
+			if (id === SYNC_ID_DONE) {
+				await raw.readBytes(4); // trailing value field, unused
+				return { id };
+			}
+			if (id === SYNC_ID_FAIL) {
+				const value = (await raw.readBytes(4)).readUInt32LE(0);
+				// FAIL payloads are just UTF-8 error messages, so there's no
+				// legitimate reason for one to approach the wire's own DATA-chunk
+				// ceiling - a malformed/hostile device advertising an arbitrarily
+				// large length here would otherwise force the same kind of
+				// unbounded buffering the namelen cap above guards against.
+				if (value > SYNC_DATA_MAX) {
+					throw new Error(`list_v2 FAIL payload length ${value} exceeds the maximum of ${SYNC_DATA_MAX}`);
+				}
+				const payload = await raw.readBytes(value);
+				return { id, payload };
+			}
+			throw new Error(`Unexpected SYNC frame during list_v2: ${id}`);
+		}
+	};
+}
+
+/**
  * Sends QUIT to end the sync session and closes the underlying stream,
  * swallowing write errors so cleanup never masks the real failure.
  * @param {Object} stream - The sync stream to quit and close.
@@ -223,6 +455,27 @@ async function quitSyncStream(stream) {
 		// Best-effort - the stream may already be closed or erroring.
 	}
 	stream.close();
+}
+
+/**
+ * Writes an entire buffer to a FileHandle, looping until every byte is
+ * written. FileHandle.write() is permitted to perform a partial write
+ * (bytesWritten < buffer.length) - a single unchecked call can silently
+ * truncate/corrupt the output file under backpressure or unusual filesystem
+ * conditions.
+ * @param {Object} fileHandle - An open fs/promises FileHandle.
+ * @param {Buffer} buffer - Bytes to write in full.
+ * @returns {Promise<void>}
+ */
+async function writeFully(fileHandle, buffer) {
+	let offset = 0;
+	while (offset < buffer.length) {
+		const { bytesWritten } = await fileHandle.write(buffer, offset, buffer.length - offset);
+		if (bytesWritten === 0) {
+			throw new Error("fileHandle.write() returned 0 bytes written - refusing to loop forever");
+		}
+		offset += bytesWritten;
+	}
 }
 
 /**
@@ -271,6 +524,87 @@ export async function push(___socket, streamManager, localPath, remotePath, opti
 }
 
 /**
+ * Pushes a file to the device via the ADB SYNC sub-protocol's 64-bit
+ * SEND_V2 command - see #8. Only usable against a device that advertised the
+ * "stat_v2"/"sendrecv_v2" CNXN feature (droidsock declares "sendrecv_v2" in
+ * its own outgoing banner, see connection.mjs). EXPERIMENTAL - implemented
+ * from spec (AOSP file_sync_protocol.h), not yet validated against a real
+ * device. See #2.
+ * @param {Object} ___socket - ADB socket (unused - the sync stream is opened via streamManager)
+ * @param {Object} streamManager - Stream manager instance
+ * @param {string} localPath - Local file path
+ * @param {string} remotePath - Remote file path on device
+ * @param {Object} [options={}] - Transfer options
+ * @param {Function} [options.onProgress] - Progress callback, called with {bytesTransferred, totalBytes} (counts uncompressed bytes read from the local file, regardless of `compression`)
+ * @param {number} [options.mode=0o644] - File permissions
+ * @param {"none"|"brotli"} [options.compression="none"] - Per-chunk compression, only if the device advertised the matching CNXN feature (`sendrecv_v2_brotli`) - droidsock declares support but doesn't enable it unless asked, since it hasn't been validated against a real device. `lz4`/`zstd` aren't implemented - see #8.
+ * @returns {Promise<void>}
+ */
+export async function pushV2(___socket, streamManager, localPath, remotePath, options = {}) {
+	const { onProgress, mode = 0o644, compression = "none" } = options;
+	assertValidMode(mode);
+	if (compression !== "none" && compression !== "brotli") {
+		throw new Error(`Invalid compression: ${compression} (must be "none" or "brotli")`);
+	}
+	const flag = compression === "brotli" ? SYNC_FLAG_BROTLI : SYNC_FLAG_NONE;
+
+	// Read from an open file handle in inputChunkMax-sized pieces, mirroring
+	// install.streaming() - the whole point of the 64-bit V2 path is
+	// supporting files well beyond what fits comfortably in memory, so
+	// buffering the entire file up front (as the 32-bit V1 push() above does)
+	// would defeat it for the large-file transfers V2 exists for.
+	const fileHandle = await open(localPath, "r");
+	try {
+		const { size: totalBytes } = await fileHandle.stat();
+
+		const stream = await streamManager.openStream("sync:");
+		const reader = createSyncFrameReader(stream);
+		try {
+			await stream.write(buildSyncFrame(SYNC_ID_SEND_V2, Buffer.from(remotePath, "utf8")));
+
+			const setup = Buffer.alloc(SYNC_SEND_V2_SETUP_SIZE);
+			setup.write(SYNC_ID_SEND_V2, 0, 4, "ascii");
+			setup.writeUInt32LE(mode >>> 0, 4);
+			setup.writeUInt32LE(flag, 8);
+			await stream.write(setup);
+
+			const inputChunkMax = flag === SYNC_FLAG_BROTLI ? SYNC_BROTLI_INPUT_MAX : SYNC_DATA_MAX;
+			let bytesTransferred = 0;
+			for (;;) {
+				// A fresh buffer per read, never reused - see install.streaming()'s
+				// identical rationale (stream.write() may queue rather than copy
+				// the buffer immediately).
+				const buffer = Buffer.alloc(inputChunkMax);
+				const { bytesRead } = await fileHandle.read(buffer, 0, inputChunkMax, null);
+				if (bytesRead === 0) break;
+				const chunk = bytesRead === inputChunkMax ? buffer : buffer.subarray(0, bytesRead);
+				const wireChunk = flag === SYNC_FLAG_BROTLI ? await brotliCompressAsync(chunk) : chunk;
+				if (wireChunk.length > SYNC_DATA_MAX) {
+					throw new Error(`Compressed SYNC DATA chunk exceeds the protocol ceiling: ${wireChunk.length} bytes (max ${SYNC_DATA_MAX})`);
+				}
+				await stream.write(buildSyncFrame(SYNC_ID_DATA, wireChunk));
+				bytesTransferred += bytesRead;
+				if (onProgress) onProgress({ bytesTransferred, totalBytes });
+			}
+
+			await stream.write(buildSyncFrame(SYNC_ID_DONE, Math.floor(Date.now() / 1000)));
+
+			const frame = await reader.next();
+			if (frame.id === SYNC_ID_FAIL) {
+				throw new Error(`SYNC send_v2 failed: ${frame.payload.toString("utf8")}`);
+			}
+			if (frame.id !== SYNC_ID_OKAY) {
+				throw new Error(`Unexpected SYNC frame during send_v2: ${frame.id}`);
+			}
+		} finally {
+			await quitSyncStream(stream);
+		}
+	} finally {
+		await fileHandle.close();
+	}
+}
+
+/**
  * Pulls a file from the device via the ADB SYNC sub-protocol's RECV command.
  * EXPERIMENTAL - implemented from spec, not yet validated against a real
  * device. See #2.
@@ -307,6 +641,91 @@ export async function pull(___socket, streamManager, remotePath, localPath, opti
 		}
 
 		await writeFile(localPath, Buffer.concat(chunks));
+	} finally {
+		await quitSyncStream(stream);
+	}
+}
+
+/**
+ * Pulls a file from the device via the ADB SYNC sub-protocol's 64-bit
+ * RECV_V2 command - see #8. Only usable against a device that advertised the
+ * "sendrecv_v2" CNXN feature. EXPERIMENTAL - implemented from spec, not yet
+ * validated against a real device. See #2.
+ * @param {Object} ___socket - ADB socket (unused - the sync stream is opened via streamManager)
+ * @param {Object} streamManager - Stream manager instance
+ * @param {string} remotePath - Remote file path on device
+ * @param {string} localPath - Local file path
+ * @param {Object} [options={}] - Transfer options
+ * @param {Function} [options.onProgress] - Progress callback, called with {bytesTransferred} (counts bytes as received on the wire, i.e. compressed size when `compression` is set)
+ * @param {"none"|"brotli"} [options.compression="none"] - Requests per-chunk compression from the device, only if it advertised the matching CNXN feature (`sendrecv_v2_brotli`) - droidsock declares support but doesn't request it unless asked, since it hasn't been validated against a real device. `lz4`/`zstd` aren't implemented - see #8.
+ * @returns {Promise<void>}
+ */
+export async function pullV2(___socket, streamManager, remotePath, localPath, options = {}) {
+	const { onProgress, compression = "none" } = options;
+	if (compression !== "none" && compression !== "brotli") {
+		throw new Error(`Invalid compression: ${compression} (must be "none" or "brotli")`);
+	}
+	const flag = compression === "brotli" ? SYNC_FLAG_BROTLI : SYNC_FLAG_NONE;
+	const stream = await streamManager.openStream("sync:");
+	const reader = createSyncFrameReader(stream);
+	try {
+		await stream.write(buildSyncFrame(SYNC_ID_RECV_V2, Buffer.from(remotePath, "utf8")));
+
+		const setup = Buffer.alloc(SYNC_RECV_V2_SETUP_SIZE);
+		setup.write(SYNC_ID_RECV_V2, 0, 4, "ascii");
+		setup.writeUInt32LE(flag, 4);
+		await stream.write(setup);
+
+		// Write each decompressed chunk straight to disk as it arrives instead
+		// of accumulating an array + Buffer.concat() at the end - for the
+		// large-file transfers that motivate the 64-bit V2 path, buffering the
+		// whole file in JS memory is exactly what V2 exists to avoid. Writing
+		// goes to a sibling temp path first, renamed onto localPath only on
+		// success - a mid-transfer failure (FAIL frame, disconnect, decompress
+		// error) would otherwise leave a partial/corrupted file at localPath
+		// itself, unlike pull() (V1), which only writes its output after the
+		// full transfer already succeeded in memory.
+		const tempPath = path.join(path.dirname(localPath), `.${path.basename(localPath)}.${randomUUID()}.part`);
+		try {
+			const fileHandle = await open(tempPath, "w");
+			try {
+				let bytesTransferred = 0;
+				for (;;) {
+					const frame = await reader.next();
+					if (frame.id === SYNC_ID_DATA) {
+						let chunk = frame.payload;
+						if (flag === SYNC_FLAG_BROTLI) {
+							try {
+								chunk = await brotliDecompressAsync(frame.payload, { maxOutputLength: SYNC_BROTLI_OUTPUT_MAX });
+							} catch (decompressError) {
+								if (decompressError.code === "ERR_BUFFER_TOO_LARGE") {
+									throw new Error(
+										`recv_v2 brotli chunk decompressed past the ${SYNC_BROTLI_OUTPUT_MAX}-byte cap - rejecting as a likely decompression bomb`,
+										{ cause: decompressError }
+									);
+								}
+								throw decompressError;
+							}
+						}
+						await writeFully(fileHandle, chunk);
+						bytesTransferred += frame.payload.length;
+						if (onProgress) onProgress({ bytesTransferred });
+					} else if (frame.id === SYNC_ID_DONE) {
+						break;
+					} else if (frame.id === SYNC_ID_FAIL) {
+						throw new Error(`SYNC recv_v2 failed: ${frame.payload.toString("utf8")}`);
+					} else {
+						throw new Error(`Unexpected SYNC frame during recv_v2: ${frame.id}`);
+					}
+				}
+			} finally {
+				await fileHandle.close();
+			}
+			await rename(tempPath, localPath);
+		} catch (error) {
+			await unlink(tempPath).catch(() => {});
+			throw error;
+		}
 	} finally {
 		await quitSyncStream(stream);
 	}
@@ -370,6 +789,58 @@ export async function listSync(___socket, streamManager, remotePath) {
 }
 
 /**
+ * Lists directory contents via the ADB SYNC sub-protocol's 64-bit LIST_V2
+ * command - see #8. Entries carry the same fields as listSync()'s plus the
+ * additional 64-bit-struct fields (atime/ctime/uid/gid/nlink/dev/ino);
+ * size/atime/mtime/ctime/dev/ino are returned as BigInt since the whole
+ * point of V2 is representing values beyond Number.MAX_SAFE_INTEGER. Only
+ * usable against a device that advertised the "ls_v2" CNXN feature.
+ * EXPERIMENTAL - implemented from spec, not yet validated against a real
+ * device. See #2.
+ * @param {Object} ___socket - ADB socket (unused - the sync stream is opened via streamManager)
+ * @param {Object} streamManager - Stream manager instance
+ * @param {string} remotePath - Remote directory path
+ * @returns {Promise<Array<Object>>} Directory entries
+ */
+export async function listV2(___socket, streamManager, remotePath) {
+	const stream = await streamManager.openStream("sync:");
+	const reader = createListV2FrameReader(stream);
+	try {
+		await stream.write(buildSyncFrame(SYNC_ID_LIST_V2, Buffer.from(remotePath, "utf8")));
+
+		const entries = [];
+		for (;;) {
+			const frame = await reader.next();
+			if (frame.id === SYNC_ID_DENT_V2) {
+				entries.push({
+					name: frame.name,
+					mode: frame.mode,
+					size: frame.size,
+					atime: frame.atime,
+					mtime: frame.mtime,
+					ctime: frame.ctime,
+					uid: frame.uid,
+					gid: frame.gid,
+					nlink: frame.nlink,
+					dev: frame.dev,
+					ino: frame.ino,
+					isDirectory: (frame.mode & S_IFMT) === S_IFDIR,
+					isFile: (frame.mode & S_IFMT) === S_IFREG,
+					isSymlink: (frame.mode & S_IFMT) === S_IFLNK
+				});
+			} else if (frame.id === SYNC_ID_DONE) {
+				break;
+			} else if (frame.id === SYNC_ID_FAIL) {
+				throw new Error(`SYNC list_v2 failed: ${frame.payload.toString("utf8")}`);
+			}
+		}
+		return entries;
+	} finally {
+		await quitSyncStream(stream);
+	}
+}
+
+/**
  * Lists directory contents on device via `ls -la`, parsed into structured entries.
  * @param {Object} socket - ADB socket
  * @param {Object} streamManager - Stream manager instance
@@ -417,6 +888,54 @@ export async function list(socket, streamManager, remotePath) {
  */
 export async function stat(socket, streamManager, remotePath) {
 	return await self.shell.execute(socket, streamManager, `stat ${quoteShellArg(remotePath)}`);
+}
+
+/**
+ * Gets file/directory stats via the ADB SYNC sub-protocol's 64-bit STAT_V2
+ * command - see #8. Unlike stat() (shell `stat` text parsing), this is
+ * binary-safe and returns structured fields directly off the wire;
+ * size/atime/mtime/ctime/dev/ino are BigInt for the same reason as
+ * listV2(). Only usable against a device that advertised the "stat_v2" CNXN
+ * feature. Throws if the device reports a non-zero `error` (e.g. ENOENT) in
+ * the reply struct - STAT_V2 has no separate FAIL frame, the error is a
+ * field on the reply itself. EXPERIMENTAL - implemented from spec, not yet
+ * validated against a real device. See #2.
+ * @param {Object} ___socket - ADB socket (unused - the sync stream is opened via streamManager)
+ * @param {Object} streamManager - Stream manager instance
+ * @param {string} remotePath - Remote path
+ * @returns {Promise<Object>} Structured stat result
+ */
+export async function statV2(___socket, streamManager, remotePath) {
+	const stream = await streamManager.openStream("sync:");
+	const raw = createRawByteReader(stream);
+	try {
+		await stream.write(buildSyncFrame(SYNC_ID_STAT_V2, Buffer.from(remotePath, "utf8")));
+
+		const record = parseStatV2Record(await raw.readBytes(SYNC_STAT_V2_SIZE));
+		if (record.id !== SYNC_ID_STAT_V2) {
+			throw new Error(`Unexpected SYNC frame during stat_v2: ${record.id}`);
+		}
+		if (record.error !== 0) {
+			throw new Error(`SYNC stat_v2 failed for ${remotePath}: errno ${record.error}`);
+		}
+		return {
+			mode: record.mode,
+			size: record.size,
+			atime: record.atime,
+			mtime: record.mtime,
+			ctime: record.ctime,
+			uid: record.uid,
+			gid: record.gid,
+			nlink: record.nlink,
+			dev: record.dev,
+			ino: record.ino,
+			isDirectory: (record.mode & S_IFMT) === S_IFDIR,
+			isFile: (record.mode & S_IFMT) === S_IFREG,
+			isSymlink: (record.mode & S_IFMT) === S_IFLNK
+		};
+	} finally {
+		await quitSyncStream(stream);
+	}
 }
 
 /**

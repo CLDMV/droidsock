@@ -238,6 +238,36 @@ export function quoteShellArg(str) {
 }
 
 /**
+ * Validates a `pm install`/`cmd package install` flags array before it's
+ * joined and interpolated into a shell command. A non-array throws a
+ * confusing TypeError from .join()/.map() with no context; a flag containing
+ * whitespace (e.g. a caller passing "--user 0" as one element instead of
+ * ["--user", "0"]) would either silently split into multiple argv tokens once
+ * joined and re-parsed by the device shell (unquoted interpolation), or - once
+ * quoted via quoteShellArg - collapse into a single argv token that `pm
+ * install` won't parse as intended. Either way it changes what's actually
+ * passed to the device from what the caller specified, so it's rejected
+ * outright rather than silently mishandled.
+ * @param {*} flags - Value to validate.
+ * @returns {Array<string>} The validated flags, unchanged.
+ */
+export function assertValidFlags(flags) {
+	if (!Array.isArray(flags) || !flags.every((flag) => typeof flag === "string" && flag.length > 0 && !/\s/.test(flag))) {
+		// JSON.stringify() throws on a circular value - fall back to String()
+		// (which can't throw for this) so the validation error itself is never
+		// masked by a formatting failure.
+		let described;
+		try {
+			described = JSON.stringify(flags);
+		} catch {
+			described = String(flags);
+		}
+		throw new Error(`Invalid flags: ${described} (must be an array of non-empty, whitespace-free strings)`);
+	}
+	return flags;
+}
+
+/**
  * Creates a timeout promise that rejects after specified time
  * @param {number} ms - Timeout in milliseconds
  * @param {string} [message='Operation timed out'] - Timeout error message

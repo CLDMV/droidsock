@@ -2,6 +2,7 @@
 trash/
 other_drivers/
 build/
+tmp/
 
 # Generated build output (tsc .d.mts emit) - rebuilt by `npm run build:types`
 types/

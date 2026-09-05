@@ -27,6 +27,17 @@ const MSG_CNXN = 0x4e584e43;
 const MSG_AUTH = 0x48545541;
 const MSG_OKAY = 0x59414b4f;
 
+// Features droidsock declares in its own outgoing CNXN banner (mirrors how it
+// already parses the DEVICE's advertised features out of the response
+// payload, below). Some devices only offer a given service to a client that
+// declared support for it during the handshake - e.g. the V2 (64-bit) SYNC
+// commands (see files.mjs) and the `exec:cmd` streaming install path (see
+// install.mjs) - so this isn't purely informational. Exact string values
+// confirmed against AOSP's own transport.cpp kFeature* constants. Only
+// brotli compression is declared (files.mjs's pushV2/pullV2 support it,
+// opt-in via options.compression); lz4/zstd aren't implemented - see #8.
+const SUPPORTED_FEATURES = ["shell_v2", "cmd", "stat_v2", "ls_v2", "sendrecv_v2", "sendrecv_v2_brotli"];
+
 /**
  * Creates an ADB connection to a device
  * @param {Object} options - Connection options
@@ -71,7 +82,7 @@ export async function create(options) {
 				self.log.debug(`Connected to ${host}:${port}, sending CNXN message...`);
 
 				// Send CNXN message
-				const systemIdentity = "device::";
+				const systemIdentity = `device::features=${SUPPORTED_FEATURES.join(",")}`;
 				const cnxnPayload = Buffer.from(systemIdentity);
 				await sendMessage(socket, MSG_CNXN, ADB_PROTOCOL_VERSION, ADB_MAX_PAYLOAD, cnxnPayload);
 

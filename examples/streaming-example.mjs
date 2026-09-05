@@ -36,7 +36,7 @@ async function logcatExample() {
 		}
 	});
 
-	const deviceConnection = await api.device.connect(device.host, device.port);
+	const deviceConnection = await api.devices.connect(device.host, device.port);
 	console.log("✅ Connected for logcat streaming...");
 
 	// Note: Streaming functionality needs to be implemented in the shell API
@@ -57,11 +57,17 @@ async function logcatExample() {
 
 	// Clean up
 	setTimeout(() => {
-		console.log("\n✅ Disconnecting...");
-		deviceConnection.disconnect();
-		if (api.shutdown) {
-			api.shutdown();
-		}
+		// setTimeout doesn't observe a callback's returned promise, so an async
+		// callback used directly here would turn a disconnect()/shutdown()
+		// rejection into an unhandled rejection - wrap it in an IIFE with an
+		// explicit catch instead.
+		(async () => {
+			console.log("\n✅ Disconnecting...");
+			await deviceConnection.disconnect();
+			if (api.shutdown) {
+				await api.shutdown();
+			}
+		})().catch((error) => console.error("❌ Cleanup error:", error.message));
 	}, 2000);
 }
 
@@ -77,7 +83,7 @@ async function topExample() {
 		}
 	});
 
-	const deviceConnection = await api.device.connect(device.host, device.port);
+	const deviceConnection = await api.devices.connect(device.host, device.port);
 	console.log("✅ Connected for system info...");
 
 	try {
@@ -99,11 +105,15 @@ async function topExample() {
 
 	// Clean up
 	setTimeout(() => {
-		console.log("\n✅ Disconnecting...");
-		deviceConnection.disconnect();
-		if (api.shutdown) {
-			api.shutdown();
-		}
+		// See logcatExample()'s identical cleanup above for why this is an IIFE
+		// with an explicit catch rather than an async setTimeout callback.
+		(async () => {
+			console.log("\n✅ Disconnecting...");
+			await deviceConnection.disconnect();
+			if (api.shutdown) {
+				await api.shutdown();
+			}
+		})().catch((error) => console.error("❌ Cleanup error:", error.message));
 	}, 1000);
 }
 
@@ -119,7 +129,7 @@ async function fileTransferExample() {
 		}
 	});
 
-	const deviceConnection = await api.device.connect(device.host, device.port);
+	const deviceConnection = await api.devices.connect(device.host, device.port);
 	console.log("✅ Connected for file operations...");
 
 	try {
@@ -153,7 +163,7 @@ async function fileTransferExample() {
 	}
 
 	// Clean up
-	deviceConnection.disconnect();
+	await deviceConnection.disconnect();
 	if (api.shutdown) {
 		await api.shutdown();
 	}
