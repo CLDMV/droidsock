@@ -424,6 +424,14 @@ function createListV2FrameReader(stream) {
 			}
 			if (id === SYNC_ID_FAIL) {
 				const value = (await raw.readBytes(4)).readUInt32LE(0);
+				// FAIL payloads are just UTF-8 error messages, so there's no
+				// legitimate reason for one to approach the wire's own DATA-chunk
+				// ceiling - a malformed/hostile device advertising an arbitrarily
+				// large length here would otherwise force the same kind of
+				// unbounded buffering the namelen cap above guards against.
+				if (value > SYNC_DATA_MAX) {
+					throw new Error(`list_v2 FAIL payload length ${value} exceeds the maximum of ${SYNC_DATA_MAX}`);
+				}
 				const payload = await raw.readBytes(value);
 				return { id, payload };
 			}

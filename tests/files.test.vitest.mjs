@@ -1061,4 +1061,22 @@ describe("files.listV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 			"list_v2 entry name length 10485760 exceeds the maximum of 4096"
 		);
 	});
+
+	test("rejects a FAIL frame claiming an oversized payload length instead of buffering forever waiting for it", async () => {
+		// Same class of issue as the oversized-namelen case above, but for the
+		// FAIL frame's own declared length - a malformed/hostile device could
+		// claim an arbitrarily large error-message length with no payload bytes
+		// ever actually following. buildFrame("FAIL", <number>) builds exactly
+		// that: a header claiming the length with an empty payload.
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("data", buildFrame("FAIL", 10 * 1024 * 1024));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.listV2(fakeSocket, streamManager, "/sdcard")).rejects.toThrow(
+			"list_v2 FAIL payload length 10485760 exceeds the maximum of 65536"
+		);
+	});
 });
