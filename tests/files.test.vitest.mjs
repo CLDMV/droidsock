@@ -720,6 +720,43 @@ describe("files.pushV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 		);
 		expect(streamManager.openStream).not.toHaveBeenCalled();
 	});
+
+	test.each([["07777"], [0o10000], [-1], [420.5], [null]])("rejects an invalid mode (%p) without opening a stream", async (mode) => {
+		const localFile = path.join(tmpDir, "push-v2-invalid-mode.txt");
+		writeFileSync(localFile, "data");
+		const streamManager = { openStream: vi.fn() };
+
+		await expect(droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest.txt", { mode })).rejects.toThrow(
+			"Invalid mode"
+		);
+		expect(streamManager.openStream).not.toHaveBeenCalled();
+	});
+
+	test("reads the local file from disk in SYNC_DATA_MAX-sized chunks rather than buffering it whole, sending multiple DATA frames", async () => {
+		const localFile = path.join(tmpDir, "push-v2-large.bin");
+		// One byte over the 64KB SYNC_DATA_MAX chunk ceiling - proves the file is
+		// read/sent in bounded pieces via a file handle, not loaded whole via
+		// readFile() (the pre-fix behavior this test guards against regressing to).
+		const big = crypto.randomBytes(64 * 1024 + 1);
+		writeFileSync(localFile, big);
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				s.emit("data", buildFrame("OKAY", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+		const onProgress = vi.fn();
+
+		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2-large.bin", { onProgress });
+
+		const dataFrames = stream.writes.filter((w) => w.subarray(0, 4).toString("ascii") === "DATA");
+		expect(dataFrames).toHaveLength(2);
+		expect(dataFrames[0].subarray(8).length).toBe(64 * 1024);
+		expect(dataFrames[1].subarray(8).length).toBe(1);
+		expect(Buffer.concat(dataFrames.map((f) => f.subarray(8))).equals(big)).toBe(true);
+		expect(onProgress).toHaveBeenLastCalledWith({ bytesTransferred: big.length, totalBytes: big.length });
+	});
 });
 
 describe("files.pullV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated against a real device)", () => {
@@ -788,6 +825,30 @@ describe("files.pullV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 			})
 		).rejects.toThrow('Invalid compression: zstd (must be "none" or "brotli")');
 		expect(streamManager.openStream).not.toHaveBeenCalled();
+	});
+
+	test("writes each DATA chunk to the local file as it arrives, reconstructing content across many chunks with cumulative progress", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-many-chunks.bin");
+		// Random (not repeated) bytes per chunk, so an out-of-order or dropped
+		// write would produce a detectably wrong file rather than accidentally
+		// matching via a repeated pattern.
+		const parts = Array.from({ length: 5 }, () => crypto.randomBytes(37));
+		const expected = Buffer.concat(parts);
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				for (const part of parts) s.emit("data", buildFrame("DATA", part));
+				s.emit("data", buildFrame("DONE", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+		const onProgress = vi.fn();
+
+		await droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile, { onProgress });
+
+		expect(readFileSync(localFile).equals(expected)).toBe(true);
+		expect(onProgress).toHaveBeenCalledTimes(5);
+		expect(onProgress).toHaveBeenLastCalledWith({ bytesTransferred: expected.length });
 	});
 });
 

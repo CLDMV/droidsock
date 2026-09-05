@@ -17,7 +17,7 @@
 
 import { self } from "@cldmv/slothlet/runtime";
 import { parseListing, quoteShellArg } from "./utils.mjs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, open } from "node:fs/promises";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
 
 /**
@@ -463,47 +463,65 @@ export async function push(___socket, streamManager, localPath, remotePath, opti
  */
 export async function pushV2(___socket, streamManager, localPath, remotePath, options = {}) {
 	const { onProgress, mode = 0o644, compression = "none" } = options;
+	assertValidMode(mode);
 	if (compression !== "none" && compression !== "brotli") {
 		throw new Error(`Invalid compression: ${compression} (must be "none" or "brotli")`);
 	}
 	const flag = compression === "brotli" ? SYNC_FLAG_BROTLI : SYNC_FLAG_NONE;
-	const data = await readFile(localPath);
 
-	const stream = await streamManager.openStream("sync:");
-	const reader = createSyncFrameReader(stream);
+	// Read from an open file handle in inputChunkMax-sized pieces, mirroring
+	// install.streaming() - the whole point of the 64-bit V2 path is
+	// supporting files well beyond what fits comfortably in memory, so
+	// buffering the entire file up front (as the 32-bit V1 push() above does)
+	// would defeat it for the large-file transfers V2 exists for.
+	const fileHandle = await open(localPath, "r");
 	try {
-		await stream.write(buildSyncFrame(SYNC_ID_SEND_V2, Buffer.from(remotePath, "utf8")));
+		const { size: totalBytes } = await fileHandle.stat();
 
-		const setup = Buffer.alloc(SYNC_SEND_V2_SETUP_SIZE);
-		setup.write(SYNC_ID_SEND_V2, 0, 4, "ascii");
-		setup.writeUInt32LE(mode >>> 0, 4);
-		setup.writeUInt32LE(flag, 8);
-		await stream.write(setup);
+		const stream = await streamManager.openStream("sync:");
+		const reader = createSyncFrameReader(stream);
+		try {
+			await stream.write(buildSyncFrame(SYNC_ID_SEND_V2, Buffer.from(remotePath, "utf8")));
 
-		const inputChunkMax = flag === SYNC_FLAG_BROTLI ? SYNC_BROTLI_INPUT_MAX : SYNC_DATA_MAX;
-		let offset = 0;
-		while (offset < data.length) {
-			const chunk = data.subarray(offset, Math.min(offset + inputChunkMax, data.length));
-			const wireChunk = flag === SYNC_FLAG_BROTLI ? brotliCompressSync(chunk) : chunk;
-			if (wireChunk.length > SYNC_DATA_MAX) {
-				throw new Error(`Compressed SYNC DATA chunk exceeds the protocol ceiling: ${wireChunk.length} bytes (max ${SYNC_DATA_MAX})`);
+			const setup = Buffer.alloc(SYNC_SEND_V2_SETUP_SIZE);
+			setup.write(SYNC_ID_SEND_V2, 0, 4, "ascii");
+			setup.writeUInt32LE(mode >>> 0, 4);
+			setup.writeUInt32LE(flag, 8);
+			await stream.write(setup);
+
+			const inputChunkMax = flag === SYNC_FLAG_BROTLI ? SYNC_BROTLI_INPUT_MAX : SYNC_DATA_MAX;
+			let bytesTransferred = 0;
+			for (;;) {
+				// A fresh buffer per read, never reused - see install.streaming()'s
+				// identical rationale (stream.write() may queue rather than copy
+				// the buffer immediately).
+				const buffer = Buffer.alloc(inputChunkMax);
+				const { bytesRead } = await fileHandle.read(buffer, 0, inputChunkMax, null);
+				if (bytesRead === 0) break;
+				const chunk = bytesRead === inputChunkMax ? buffer : buffer.subarray(0, bytesRead);
+				const wireChunk = flag === SYNC_FLAG_BROTLI ? brotliCompressSync(chunk) : chunk;
+				if (wireChunk.length > SYNC_DATA_MAX) {
+					throw new Error(`Compressed SYNC DATA chunk exceeds the protocol ceiling: ${wireChunk.length} bytes (max ${SYNC_DATA_MAX})`);
+				}
+				await stream.write(buildSyncFrame(SYNC_ID_DATA, wireChunk));
+				bytesTransferred += bytesRead;
+				if (onProgress) onProgress({ bytesTransferred, totalBytes });
 			}
-			await stream.write(buildSyncFrame(SYNC_ID_DATA, wireChunk));
-			offset += chunk.length;
-			if (onProgress) onProgress({ bytesTransferred: offset, totalBytes: data.length });
-		}
 
-		await stream.write(buildSyncFrame(SYNC_ID_DONE, Math.floor(Date.now() / 1000)));
+			await stream.write(buildSyncFrame(SYNC_ID_DONE, Math.floor(Date.now() / 1000)));
 
-		const frame = await reader.next();
-		if (frame.id === SYNC_ID_FAIL) {
-			throw new Error(`SYNC send_v2 failed: ${frame.payload.toString("utf8")}`);
-		}
-		if (frame.id !== SYNC_ID_OKAY) {
-			throw new Error(`Unexpected SYNC frame during send_v2: ${frame.id}`);
+			const frame = await reader.next();
+			if (frame.id === SYNC_ID_FAIL) {
+				throw new Error(`SYNC send_v2 failed: ${frame.payload.toString("utf8")}`);
+			}
+			if (frame.id !== SYNC_ID_OKAY) {
+				throw new Error(`Unexpected SYNC frame during send_v2: ${frame.id}`);
+			}
+		} finally {
+			await quitSyncStream(stream);
 		}
 	} finally {
-		await quitSyncStream(stream);
+		await fileHandle.close();
 	}
 }
 
@@ -579,25 +597,31 @@ export async function pullV2(___socket, streamManager, remotePath, localPath, op
 		setup.writeUInt32LE(flag, 4);
 		await stream.write(setup);
 
-		const chunks = [];
-		let totalBytes = 0;
-		for (;;) {
-			const frame = await reader.next();
-			if (frame.id === SYNC_ID_DATA) {
-				const chunk = flag === SYNC_FLAG_BROTLI ? brotliDecompressSync(frame.payload) : frame.payload;
-				chunks.push(chunk);
-				totalBytes += frame.payload.length;
-				if (onProgress) onProgress({ bytesTransferred: totalBytes });
-			} else if (frame.id === SYNC_ID_DONE) {
-				break;
-			} else if (frame.id === SYNC_ID_FAIL) {
-				throw new Error(`SYNC recv_v2 failed: ${frame.payload.toString("utf8")}`);
-			} else {
-				throw new Error(`Unexpected SYNC frame during recv_v2: ${frame.id}`);
+		// Write each decompressed chunk straight to disk as it arrives instead
+		// of accumulating an array + Buffer.concat() at the end - for the
+		// large-file transfers that motivate the 64-bit V2 path, buffering the
+		// whole file in JS memory is exactly what V2 exists to avoid.
+		const fileHandle = await open(localPath, "w");
+		try {
+			let totalBytes = 0;
+			for (;;) {
+				const frame = await reader.next();
+				if (frame.id === SYNC_ID_DATA) {
+					const chunk = flag === SYNC_FLAG_BROTLI ? brotliDecompressSync(frame.payload) : frame.payload;
+					await fileHandle.write(chunk);
+					totalBytes += frame.payload.length;
+					if (onProgress) onProgress({ bytesTransferred: totalBytes });
+				} else if (frame.id === SYNC_ID_DONE) {
+					break;
+				} else if (frame.id === SYNC_ID_FAIL) {
+					throw new Error(`SYNC recv_v2 failed: ${frame.payload.toString("utf8")}`);
+				} else {
+					throw new Error(`Unexpected SYNC frame during recv_v2: ${frame.id}`);
+				}
 			}
+		} finally {
+			await fileHandle.close();
 		}
-
-		await writeFile(localPath, Buffer.concat(chunks));
 	} finally {
 		await quitSyncStream(stream);
 	}
