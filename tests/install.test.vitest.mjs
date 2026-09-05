@@ -181,6 +181,18 @@ describe("install.streaming (EXPERIMENTAL - exec:cmd package install, not yet va
 		}
 	);
 
+	test("rejects a circular flags value with the intended validation error, not a JSON.stringify() crash", async () => {
+		const localFile = path.join(tmpDir, "app.apk");
+		writeFileSync(localFile, "x");
+		const streamManager = { openStream: vi.fn() };
+
+		const circular = [];
+		circular.push(circular);
+
+		await expect(droidsock.install.streaming(fakeSocket, streamManager, localFile, { flags: circular })).rejects.toThrow("Invalid flags");
+		expect(streamManager.openStream).not.toHaveBeenCalled();
+	});
+
 	test("chunks stdin larger than the 64KB write chunk into multiple stream.write() calls", async () => {
 		const localFile = path.join(tmpDir, "big.apk");
 		const big = Buffer.alloc(64 * 1024 + 10, 0x42);

@@ -37,7 +37,16 @@ const EXEC_WRITE_CHUNK = 64 * 1024;
  */
 function assertValidFlags(flags) {
 	if (!Array.isArray(flags) || !flags.every((flag) => typeof flag === "string" && flag.length > 0 && !/\s/.test(flag))) {
-		throw new Error(`Invalid flags: ${JSON.stringify(flags)} (must be an array of non-empty, whitespace-free strings)`);
+		// JSON.stringify() throws on a circular value - fall back to String()
+		// (which can't throw for this) so the validation error itself is never
+		// masked by a formatting failure.
+		let described;
+		try {
+			described = JSON.stringify(flags);
+		} catch {
+			described = String(flags);
+		}
+		throw new Error(`Invalid flags: ${described} (must be an array of non-empty, whitespace-free strings)`);
 	}
 	return flags;
 }
