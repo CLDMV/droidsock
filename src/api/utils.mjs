@@ -267,7 +267,7 @@ export function parseHostPort(hostPort, defaultPort = 5555) {
  * fully identifier-safe (letters/digits/underscore only), so
  * `api.devices.<key>` dot-access still works.
  * @param {string} deviceId - `${host}:${port}`
- * @returns {string} A path-safe key, e.g. "10_6_0_108_5555", "fe80__1__5555"
+ * @returns {string} A path-safe key, e.g. "10_6_0_108__5555" (from "10.6.0.108:5555"), "fe80____1__5555" (from "fe80::1:5555")
  */
 export function sanitizeKey(deviceId) {
 	return deviceId.replace(/\./g, "_").replace(/:/g, "__");

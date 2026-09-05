@@ -53,9 +53,12 @@ function bigIntToIpv4(value) {
 
 /**
  * Parses a CIDR block (IPv4 or IPv6) into its sweepable host range. Family is
- * detected from the address via `net.isIP()`, which also validates it (so
- * IPv6 zone ids, malformed octets, etc. are rejected here rather than by a
- * hand-rolled check). IPv4 excludes the network/broadcast address for
+ * detected from the address via `net.isIP()`, which also validates its
+ * general shape (malformed octets, wrong group counts, etc. are rejected
+ * here rather than by a hand-rolled check) - though `net.isIP()` itself
+ * accepts an IPv6 zone id ("fe80::1%eth0"), that specific case is rejected
+ * later, inside `ipv6ToBigInt()` (see its doc comment for why). IPv4
+ * excludes the network/broadcast address for
  * prefixes /1-/30; a /31 (point-to-point, RFC 3021) sweeps both, /32 sweeps
  * one, and /0 is accepted (rejecting it would just be an inaccurate error
  * message) but always astronomically larger than any sane `maxHosts`.
