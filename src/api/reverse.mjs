@@ -28,12 +28,18 @@ import net from "node:net";
  * @returns {void}
  */
 function assertOkayAck(ack, action) {
-	const text = ack.toString("utf8");
-	if (text.startsWith("OKAY")) return;
-	if (text.startsWith("FAIL")) {
-		throw new Error(`Failed to ${action}: ${text.slice(8) || text.slice(4)}`);
+	const id = ack.toString("ascii", 0, 4);
+	if (id === "OKAY") return;
+	if (id === "FAIL") {
+		// The 4-hex-digit length must be honored, not assumed - a valid
+		// zero-length FAIL0000 (no message) previously fell through a
+		// `text.slice(8) || text.slice(4)` fallback (empty string is falsy)
+		// and reported "0000" - the length field itself - as the message.
+		const messageLength = parseInt(ack.toString("ascii", 4, 8), 16) || 0;
+		const message = ack.subarray(8, 8 + messageLength).toString("utf8");
+		throw new Error(`Failed to ${action}: ${message}`);
 	}
-	throw new Error(`Unexpected response ${action}: ${text}`);
+	throw new Error(`Unexpected response to ${action}: ${ack.toString("utf8")}`);
 }
 
 /**
@@ -137,7 +143,10 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 		streamManager.off("remoteOpen", onRemoteOpen);
 		throw error;
 	} finally {
-		if (registerStream) registerStream.close();
+		// closeStream() (not stream.close()) so the stream manager also drops
+		// its registry entry - see reboot.mjs's execute() for the same
+		// pattern and rationale.
+		if (registerStream) streamManager.closeStream(registerStream.localId);
 	}
 
 	return {
@@ -149,17 +158,22 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 			// Best-effort: unregister the tunnel so the device stops routing
 			// connections here. A connection that's already gone (or a device
 			// that never re-acks a killforward) shouldn't block teardown.
+			let killStream;
 			try {
-				const killStream = await streamManager.openStream(`reverse:killforward:tcp:${devicePort}`);
+				killStream = await streamManager.openStream(`reverse:killforward:tcp:${devicePort}`);
 				const ack = await new Promise((resolve, reject) => {
 					killStream.once("data", resolve);
 					killStream.once("error", reject);
 					killStream.once("close", () => reject(new Error("reverse killforward stream closed with no ack")));
 				});
-				killStream.close();
 				assertOkayAck(ack, `unregister reverse tunnel tcp:${devicePort}`);
 			} catch {
 				// Non-fatal - see comment above.
+			} finally {
+				// closeStream() (not stream.close()) so the stream manager also
+				// drops its registry entry, regardless of which step above
+				// failed - see reboot.mjs's execute() for the same pattern.
+				if (killStream) streamManager.closeStream(killStream.localId);
 			}
 		}
 	};

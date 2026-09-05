@@ -67,14 +67,20 @@ function createFakeAdbStream() {
 /**
  * Creates a fake stream manager: openStream() resolves a fresh fake ADB
  * stream per call (captured in order in `openedStreams`, with the
- * destination each was opened for in `openedDestinations`), and on/off/emit
- * proxy a real EventEmitter for the "remoteOpen" pub/sub reverse.mjs uses.
+ * destination each was opened for in `openedDestinations`, and a `localId`
+ * assigned like the real stream.mjs manager does), on/off/emit proxy a real
+ * EventEmitter for the "remoteOpen" pub/sub reverse.mjs uses, and
+ * closeStream(localId) mirrors the real manager's close()-then-drop-from-
+ * registry behavior - reverse.mjs must call this (not stream.close()
+ * directly) so a closed stream doesn't linger in the registry.
  * @returns {Object} The fake stream manager.
  */
 function createFakeStreamManager() {
 	const emitter = new EventEmitter();
 	const openedStreams = [];
 	const openedDestinations = [];
+	const streamsById = new Map();
+	let nextLocalId = 1;
 	return {
 		openedStreams,
 		openedDestinations,
@@ -84,8 +90,17 @@ function createFakeStreamManager() {
 		openStream: vi.fn((destination) => {
 			openedDestinations.push(destination);
 			const stream = createFakeAdbStream();
+			stream.localId = nextLocalId++;
+			streamsById.set(stream.localId, stream);
 			openedStreams.push(stream);
 			return Promise.resolve(stream);
+		}),
+		closeStream: vi.fn((localId) => {
+			const stream = streamsById.get(localId);
+			if (stream) {
+				stream.close();
+				streamsById.delete(localId);
+			}
 		})
 	};
 }
@@ -110,17 +125,35 @@ describe("reverse.start", () => {
 		const handle = await startPromise;
 		expect(handle.devicePort).toBe(7000);
 		expect(handle.hostPort).toBe(8000);
+		// closeStream() (not stream.close() directly) so the manager also drops
+		// its registry entry - the underlying stream still gets closed either
+		// way, but going through closeStream is what actually removes it.
+		expect(streamManager.closeStream).toHaveBeenCalledWith(streamManager.openedStreams[0].localId);
 		expect(streamManager.openedStreams[0].close).toHaveBeenCalled();
 	});
 
-	test("rejects with the device's message when registration is acked FAIL", async () => {
+	test("rejects with the device's message when registration is acked FAIL, and still cleans up via closeStream()", async () => {
 		const streamManager = createFakeStreamManager();
 		const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, 8000);
 
 		await vi.waitUntil(() => streamManager.openedStreams.length > 0);
-		streamManager.openedStreams[0].emit("data", Buffer.from("FAIL0009not found"));
+		const registerStream = streamManager.openedStreams[0];
+		registerStream.emit("data", Buffer.from("FAIL0009not found"));
 
 		await expect(startPromise).rejects.toThrow(/not found/);
+		expect(streamManager.closeStream).toHaveBeenCalledWith(registerStream.localId);
+	});
+
+	test("rejects with an empty message (not the length field) when acked a zero-length FAIL0000", async () => {
+		const streamManager = createFakeStreamManager();
+		const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, 8000);
+
+		await vi.waitUntil(() => streamManager.openedStreams.length > 0);
+		streamManager.openedStreams[0].emit("data", Buffer.from("FAIL0000"));
+
+		// Previously a falsy-empty-string fallback misread the length field
+		// itself ("0000") as the message - assert the message is empty, not "0000".
+		await expect(startPromise).rejects.toThrow("Failed to register reverse tunnel tcp:7000 -> tcp:8000: ");
 	});
 
 	test("bridges a device-initiated connection tagged for this mapping's hostPort to a real local TCP target", async () => {
@@ -195,8 +228,13 @@ describe("reverse.start", () => {
 			const closePromise = handle.close();
 			await vi.waitUntil(() => streamManager.openedStreams.length > 1);
 			expect(streamManager.openedDestinations[1]).toBe("reverse:killforward:tcp:7000");
-			streamManager.openedStreams[1].emit("data", Buffer.from("OKAY"));
+			const killStream = streamManager.openedStreams[1];
+			killStream.emit("data", Buffer.from("OKAY"));
 			await closePromise;
+
+			// closeStream() (not stream.close() directly) so the manager also
+			// drops its registry entry.
+			expect(streamManager.closeStream).toHaveBeenCalledWith(killStream.localId);
 
 			const deviceStream = createFakeAdbStream();
 			streamManager.emit("remoteOpen", deviceStream, `tcp:${hostPort}`);
@@ -204,6 +242,33 @@ describe("reverse.start", () => {
 			// The listener was removed by close() - no local connection attempt,
 			// and the fake stream was never even written to.
 			expect(deviceStream.writes).toEqual([]);
+		} finally {
+			await new Promise((resolve) => target.close(resolve));
+		}
+	});
+
+	test("close() cleans up the killforward stream via closeStream() even when no ack ever arrives", async () => {
+		const target = net.createServer();
+		await new Promise((resolve) => target.listen(0, "127.0.0.1", resolve));
+		const hostPort = target.address().port;
+
+		try {
+			const streamManager = createFakeStreamManager();
+			const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, hostPort);
+			await vi.waitUntil(() => streamManager.openedStreams.length > 0);
+			streamManager.openedStreams[0].emit("data", Buffer.from("OKAY"));
+			const handle = await startPromise;
+
+			const closePromise = handle.close();
+			await vi.waitUntil(() => streamManager.openedStreams.length > 1);
+			const killStream = streamManager.openedStreams[1];
+			// The device closes the stream without ever acking - the ack promise
+			// rejects. close() is best-effort and swallows this, but the stream
+			// must still be cleaned up via closeStream() regardless.
+			killStream.emit("close");
+			await closePromise;
+
+			expect(streamManager.closeStream).toHaveBeenCalledWith(killStream.localId);
 		} finally {
 			await new Promise((resolve) => target.close(resolve));
 		}
