@@ -86,8 +86,9 @@ afterEach(async () => {
 	if (droidsock) {
 		// See device.test.vitest.mjs for why every device is disconnected before
 		// closing the fake server (net.Server.close()'s callback waits for every
-		// open connection to end).
-		await droidsock.devices.disconnect().catch(() => {});
+		// open connection to end). Synchronous now - there's no api-tree work
+		// left in disconnect() to await.
+		droidsock.devices.disconnect();
 		if (droidsock.shutdown) await droidsock.shutdown();
 	}
 	if (fakeServer) {
@@ -121,25 +122,51 @@ describe("devices.list()", () => {
 	});
 });
 
-describe("devices.disconnect() - collection-wide, zero-arg only", () => {
-	test("disconnects every connected device and returns the count", async () => {
+describe("devices.disconnect() - collection-wide, zero-arg only, synchronous", () => {
+	test("disconnects every connected device, keeps every leaf mounted, and returns the count", async () => {
 		const { droidsock: instance } = await connectDevice();
 		const secondServer = await createFakeAdbServer();
 		try {
-			await instance.device.connect("127.0.0.1", secondServer.port, { keyDir });
+			const second = await instance.device.connect("127.0.0.1", secondServer.port, { keyDir });
 			expect(instance.devices.list()).toHaveLength(2);
 
-			await expect(instance.devices.disconnect()).resolves.toBe(2);
+			expect(instance.devices.disconnect()).toBe(2);
 			expect(instance.devices.list()).toHaveLength(0);
+			// disconnect() (all) is not remove() (all) - both leaves stay mounted.
+			expect(instance.devices.get(second)).toBe(second);
 		} finally {
 			await new Promise((resolve) => secondServer.server.close(resolve));
 		}
 	});
 
-	test("rejects any argument rather than silently disconnecting everything - the mix-up with device.disconnect(host, port) it exists to catch", async () => {
+	test("throws synchronously on any argument rather than silently disconnecting everything - the mix-up with device.disconnect(host, port) it exists to catch", async () => {
 		droidsock = await createDroidSock();
-		await expect(droidsock.devices.disconnect("127.0.0.1", 5555)).rejects.toThrow(
+		expect(() => droidsock.devices.disconnect("127.0.0.1", 5555)).toThrow(
 			"devices.disconnect() takes no arguments - it disconnects ALL devices. Use device.disconnect(host, port) for one."
+		);
+	});
+});
+
+describe("devices.remove() - collection-wide, zero-arg only, async", () => {
+	test("disconnects and unmounts every device, returning the count", async () => {
+		const { device, droidsock: instance } = await connectDevice();
+		const secondServer = await createFakeAdbServer();
+		try {
+			const second = await instance.device.connect("127.0.0.1", secondServer.port, { keyDir });
+			expect(instance.devices.list()).toHaveLength(2);
+
+			await expect(instance.devices.remove()).resolves.toBe(2);
+			expect(instance.devices.get(device)).toBeUndefined();
+			expect(instance.devices.get(second)).toBeUndefined();
+		} finally {
+			await new Promise((resolve) => secondServer.server.close(resolve));
+		}
+	});
+
+	test("rejects any argument rather than silently removing everything - the mix-up with device.remove(host, port) it exists to catch", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.devices.remove("127.0.0.1", 5555)).rejects.toThrow(
+			"devices.remove() takes no arguments - it removes ALL devices. Use device.remove(host, port) for one."
 		);
 	});
 });
@@ -167,9 +194,15 @@ describe("devices.get(idOrLeaf)", () => {
 		expect(droidsock.devices.get("[2001:db8::1]:5555")).toBeUndefined();
 	});
 
-	test("returns undefined for a disconnected leaf reference instead of the stale object", async () => {
+	test("still returns the SAME leaf after disconnect() - it's not unmounted, only remove() unmounts it", async () => {
 		const { device, droidsock: instance } = await connectDevice();
-		await device.disconnect();
+		device.disconnect();
+		expect(instance.devices.get(device)).toBe(device);
+	});
+
+	test("returns undefined once the device has actually been removed", async () => {
+		const { device, droidsock: instance } = await connectDevice();
+		await device.remove();
 		expect(instance.devices.get(device)).toBeUndefined();
 	});
 });

@@ -89,8 +89,9 @@ afterEach(async () => {
 		// leave it, since disconnecting isn't what they're testing) would
 		// otherwise hang fakeServer.server.close() below until the hook
 		// timeout. Disconnecting every device first guarantees the fake
-		// server has nothing left open to wait on.
-		await droidsock.devices.disconnect().catch(() => {});
+		// server has nothing left open to wait on. Synchronous now - there's
+		// no api-tree work left in disconnect() to await.
+		droidsock.devices.disconnect();
 		if (droidsock.shutdown) await droidsock.shutdown();
 	}
 	if (fakeServer) {
@@ -255,20 +256,35 @@ describe("devices leaf - thin delegation to the composed protocol modules", () =
 	});
 });
 
-describe("device.connect() - reuse and stale-entry handling", () => {
+describe("device.connect() - reuse and reconnect", () => {
 	test("returns the exact same leaf on a second connect() call while still connected", async () => {
 		const { device, droidsock: instance } = await connectDevice();
 		const second = await instance.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 		expect(second).toBe(device);
 	});
 
-	test("detaches a stale entry (socket died without disconnect()) and mounts a fresh connection at the same key", async () => {
+	test("reconnects the SAME leaf in place when the socket died without disconnect() - no new object, no re-mount", async () => {
 		const { device, droidsock: instance } = await connectDevice();
+		const oldSocket = device.connection.socket;
 		device.connection.socket.destroy();
 		await vi.waitUntil(() => device.isConnected() === false);
 
 		const reconnected = await instance.device.connect("127.0.0.1", fakeServer.port, { keyDir });
-		expect(reconnected).not.toBe(device);
+		expect(reconnected).toBe(device);
+		expect(reconnected.isConnected()).toBe(true);
+		expect(reconnected.connection.socket).not.toBe(oldSocket);
+	});
+
+	test("reconnects a cleanly disconnect()'d device with no options re-supplied, reusing the remembered keyDir", async () => {
+		const { device, droidsock: instance } = await connectDevice();
+		instance.device.disconnect("127.0.0.1", fakeServer.port);
+		expect(device.isConnected()).toBe(false);
+
+		// No options argument at all - connect() must fall back to what this
+		// leaf was created with (leaf.options), not require the caller to
+		// remember and re-supply keyDir.
+		const reconnected = await instance.device.connect("127.0.0.1", fakeServer.port);
+		expect(reconnected).toBe(device);
 		expect(reconnected.isConnected()).toBe(true);
 	});
 });
@@ -276,18 +292,36 @@ describe("device.connect() - reuse and stale-entry handling", () => {
 describe("device.disconnect(host, port) - single-target disconnect", () => {
 	test("returns false when no matching device is connected", async () => {
 		droidsock = await createDroidSock();
-		await expect(droidsock.device.disconnect("10.0.0.1", 5555)).resolves.toBe(false);
+		expect(droidsock.device.disconnect("10.0.0.1", 5555)).toBe(false);
 	});
 
-	test("disconnects a matching device and returns true", async () => {
+	test("disconnects a matching device, keeps its leaf mounted (reconnectable), and returns true", async () => {
 		const { device, droidsock: instance } = await connectDevice();
 		const socket = device.connection.socket;
-		await expect(instance.device.disconnect("127.0.0.1", fakeServer.port)).resolves.toBe(true);
+		expect(instance.device.disconnect("127.0.0.1", fakeServer.port)).toBe(true);
 
-		// The leaf is unmounted as part of disconnecting, so the device reference itself is no
-		// longer a usable api leaf afterward - check the effect (socket torn down, leaf gone
-		// from the registry) rather than calling a method on the now-detached object.
 		expect(socket.destroyed).toBe(true);
+		expect(device.isConnected()).toBe(false);
+		// list() only shows connected devices, but the leaf itself is still
+		// mounted and reconnectable - disconnect() is not remove().
 		expect(instance.devices.list()).toEqual([]);
+		expect(instance.devices.get(device)).toBe(device);
+	});
+});
+
+describe("device.remove(host, port) - forgets a specific device", () => {
+	test("returns false when no matching device exists", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.device.remove("10.0.0.1", 5555)).resolves.toBe(false);
+	});
+
+	test("disconnects (if needed) and unmounts the leaf, unlike disconnect()", async () => {
+		const { device, droidsock: instance } = await connectDevice();
+		const socket = device.connection.socket;
+
+		await expect(instance.device.remove("127.0.0.1", fakeServer.port)).resolves.toBe(true);
+
+		expect(socket.destroyed).toBe(true);
+		expect(instance.devices.get(device)).toBeUndefined();
 	});
 });

@@ -43,20 +43,22 @@ describe("index.mjs default export", () => {
 		}
 	});
 
-	test("device module exposes the single-target connect/disconnect functions", async () => {
+	test("device module exposes the single-target connect/disconnect/remove functions", async () => {
 		const droidsock = await createDroidSock();
 		try {
 			expect(typeof droidsock.device.connect).toBe("function");
 			expect(typeof droidsock.device.disconnect).toBe("function");
+			expect(typeof droidsock.device.remove).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
 	});
 
-	test("devices module exposes the collection-wide list/disconnect/get functions", async () => {
+	test("devices module exposes the collection-wide list/disconnect/remove/get functions", async () => {
 		const droidsock = await createDroidSock();
 		try {
 			expect(typeof droidsock.devices.list).toBe("function");
+			expect(typeof droidsock.devices.remove).toBe("function");
 			expect(typeof droidsock.devices.disconnect).toBe("function");
 			expect(typeof droidsock.devices.get).toBe("function");
 		} finally {
