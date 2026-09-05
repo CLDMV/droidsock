@@ -23,7 +23,7 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 
 ### Latest: v2.0.0 (September 2026)
 
-- **🚨 Breaking**: the `device` module is now split into `device` (single-target `connect(host, port)` / `disconnect(host, port)`) and `devices` (collection-wide `list()` / `disconnect()` (all) / `get(idOrLeaf)`) - connected devices are still mounted as composed API leaves at `api.devices.<host_port>`. Disconnect calls are now `async`.
+- **🚨 Breaking**: the `device` module is now split into `device` (single-target `connect(host, port)` / `disconnect(host, port)` / `remove(host, port)`) and `devices` (collection-wide `list()` / `disconnect()` (all) / `remove()` (all) / `get(idOrLeaf)`) - connected devices are still mounted as composed API leaves at `api.devices.<host_port>`. A device leaf now persists across a disconnect - `disconnect()` only tears down the socket (and stays synchronous), `connect()` on the same host:port later reconnects that same leaf without re-supplying options, and `remove()` is the new, separate "forget this device" operation (the one that's actually `async`).
 - **IPv6 support** - `device.connect()`, `discover.subnet()`, and `discover.mdns()` all accept IPv6 addresses/CIDRs now, not just IPv4.
 - **`devices.get(idOrLeaf)`** (new) - looks up a connected device leaf by `"host:port"` string or by the leaf object itself; the safe way to re-resolve a leaf reference instead of holding onto a stale one.
 - **`device.reverse()`** (experimental) - completes port forwarding with the device → host direction.
@@ -115,7 +115,7 @@ Use the `references/devices.json` file to configure your devices:
 
 ## API Reference
 
-`droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` connects to a device (IPv4 or IPv6) and returns its live leaf - also reachable afterward at `api.devices["<host>_<port>"]` (a `.` becomes `_`, a `:` becomes `__`) - exposing connection state, shell execution/streaming, file operations (`push` / `pull` / `list` / `stat`), reboot, port forwarding, and APK install. `api.device.disconnect(host, port)` disconnects one device; `api.devices.list()` / `disconnect()` (all) / `get(idOrLeaf)` manage the set of active connections as a whole.
+`droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` connects to a device (IPv4 or IPv6) and returns its live leaf - also reachable afterward at `api.devices["<host>_<port>"]` (a `.` becomes `_`, a `:` becomes `__`) - exposing connection state, shell execution/streaming, file operations (`push` / `pull` / `list` / `stat`), reboot, port forwarding, and APK install. `api.device.disconnect(host, port)` tears down one device's connection without forgetting it - reconnect later with `connect()` on the same host:port, no need to re-supply options; `api.device.remove(host, port)` forgets it entirely. `api.devices.list()` / `disconnect()` (all) / `remove()` (all) / `get(idOrLeaf)` manage the set of known devices as a whole.
 
 📚 **See [docs/API.md](./docs/API.md) for the full method reference**, including every option and the experimental/scope caveats on `push` / `pull` / `list` / `forward` / `reverse` / `install`.
 
@@ -158,7 +158,7 @@ node examples/streaming-example.mjs files
 8. **Reverse Layer** (`src/api/reverse.mjs`): TCP port forwarding (device → host) via `reverse:forward:`/`reverse:killforward:` and the Stream layer's device-initiated stream handling
 9. **Install Layer** (`src/api/install.mjs`): Local APK install, composed from the Files and Shell layers
 10. **Pairing Layer** (`src/api/pairing.mjs`): Wi-Fi pairing (`adb pair` equivalent) - a separate TLS 1.3 + SPAKE2 protocol reusing the Authentication layer's persistent RSA identity, not composed with any of the layers above
-11. **Device / Devices Layers** (`src/api/device.mjs`, `src/api/devices.mjs`): High-level per-device API composing the layers above, split by single-target (`device.connect`/`disconnect`) vs. collection-wide (`devices.list`/`disconnect`/`get`) operations. Each connected device is a real slothlet leaf at `api.devices.<sanitized host_port>`, assigned there by `connect()` rather than held in a private module variable, so its methods keep working `self`/context access exactly like any other leaf
+11. **Device / Devices Layers** (`src/api/device.mjs`, `src/api/devices.mjs`): High-level per-device API composing the layers above, split by single-target (`device.connect`/`disconnect`/`remove`) vs. collection-wide (`devices.list`/`disconnect`/`remove`/`get`) operations. Each device is a real, persistent slothlet leaf at `api.devices.<sanitized host_port>`, assigned there by `connect()` rather than held in a private module variable, so its methods keep working `self`/context access exactly like any other leaf - the leaf outlives any one connection, and only `remove()` unmounts it
 12. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
 
 📚 **See [docs/PROTOCOL.md](./docs/PROTOCOL.md) for wire-level protocol details** (packet structure, auth flow, SYNC sub-protocol framing, reboot/forward service usage).
