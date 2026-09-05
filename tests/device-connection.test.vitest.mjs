@@ -41,7 +41,7 @@ describe.skipIf(!deviceHost)("live device connection", () => {
 	test("connects, authenticates, and runs a shell command", async () => {
 		const droidsock = await createDroidSock({ config: { debug: false, verbose: false } });
 		try {
-			const device = await droidsock.devices.connect(deviceHost, devicePort);
+			const device = await droidsock.device.connect(deviceHost, devicePort);
 			expect(device.isConnected()).toBe(true);
 
 			const result = await device.shell("echo droidsock-test-ok");
@@ -57,8 +57,8 @@ describe.skipIf(!deviceHost)("live device connection", () => {
 	test("reuses an existing connection for the same host:port", async () => {
 		const droidsock = await createDroidSock();
 		try {
-			const first = await droidsock.devices.connect(deviceHost, devicePort);
-			const second = await droidsock.devices.connect(deviceHost, devicePort);
+			const first = await droidsock.device.connect(deviceHost, devicePort);
+			const second = await droidsock.device.connect(deviceHost, devicePort);
 			expect(second).toBe(first);
 			await first.disconnect();
 		} finally {
@@ -69,7 +69,7 @@ describe.skipIf(!deviceHost)("live device connection", () => {
 	test("the named createDroidSock export reaches the same device", async () => {
 		const { createDroidSock: createDroidSockNamed } = await import("../index.mjs");
 		const droidsock = await createDroidSockNamed();
-		const device = await droidsock.devices.connect(deviceHost, devicePort);
+		const device = await droidsock.device.connect(deviceHost, devicePort);
 		try {
 			expect(device.isConnected()).toBe(true);
 		} finally {
@@ -83,7 +83,7 @@ describe("device connection without a reachable host", () => {
 	test("rejects rather than hanging when the host refuses the connection", async () => {
 		const droidsock = await createDroidSock();
 		try {
-			await expect(droidsock.devices.connect("127.0.0.1", 1)).rejects.toThrow();
+			await expect(droidsock.device.connect("127.0.0.1", 1)).rejects.toThrow();
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
