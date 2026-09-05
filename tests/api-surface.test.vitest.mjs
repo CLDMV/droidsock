@@ -22,7 +22,7 @@ describe("index.mjs default export", () => {
 				"auth",
 				"config",
 				"connection",
-				"device",
+				"devices",
 				"discover",
 				"files",
 				"forward",
@@ -42,13 +42,13 @@ describe("index.mjs default export", () => {
 		}
 	});
 
-	test("device module exposes the documented connection-management functions", async () => {
+	test("devices module exposes the documented connection-management functions", async () => {
 		const droidsock = await createDroidSock();
 		try {
-			expect(typeof droidsock.device.connect).toBe("function");
-			expect(typeof droidsock.device.list).toBe("function");
-			expect(typeof droidsock.device.disconnect).toBe("function");
-			expect(typeof droidsock.device.disconnectAll).toBe("function");
+			expect(typeof droidsock.devices.connect).toBe("function");
+			expect(typeof droidsock.devices.list).toBe("function");
+			expect(typeof droidsock.devices.disconnect).toBe("function");
+			expect(typeof droidsock.devices.disconnectAll).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
@@ -93,10 +93,23 @@ describe("index.mjs default export", () => {
 		}
 	});
 
-	test("install module exposes classic", async () => {
+	test("install module exposes classic and streaming", async () => {
 		const droidsock = await createDroidSock();
 		try {
 			expect(typeof droidsock.install.classic).toBe("function");
+			expect(typeof droidsock.install.streaming).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("files module exposes the SYNC V2 (64-bit) variants", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.files.pushV2).toBe("function");
+			expect(typeof droidsock.files.pullV2).toBe("function");
+			expect(typeof droidsock.files.statV2).toBe("function");
+			expect(typeof droidsock.files.listV2).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
@@ -121,10 +134,10 @@ describe("index.mjs default export", () => {
 		}
 	});
 
-	test("device.list() starts empty with no active connections", async () => {
+	test("devices.list() starts empty with no active connections", async () => {
 		const droidsock = await createDroidSock();
 		try {
-			expect(droidsock.device.list()).toEqual([]);
+			expect(droidsock.devices.list()).toEqual([]);
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}

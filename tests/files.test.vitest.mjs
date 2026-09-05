@@ -13,7 +13,9 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import crypto from "node:crypto";
+import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import createDroidSock from "../index.mjs";
@@ -64,6 +66,102 @@ function buildDentFrame(mode, size, mtime, name) {
 	header.writeUInt32LE(mtime, 12);
 	header.writeUInt32LE(nameBuf.length, 16);
 	return Buffer.concat([header, nameBuf]);
+}
+
+/**
+ * Builds a raw sync_stat_v2 struct (id + error + dev + ino + mode + nlink +
+ * uid + gid + size + atime + mtime + ctime, 72 bytes total, no generic
+ * id+value+payload envelope) matching files.mjs's own parseStatV2Record, for
+ * driving the fake sync stream in statV2()/listV2() tests.
+ * @param {Object} [fields={}] - Struct field overrides.
+ * @param {string} [fields.id="STA2"] - Leading 4-byte record id (override to simulate a desynced/unexpected reply).
+ * @param {number} [fields.error=0] - errno (0 = success).
+ * @param {number} [fields.mode=0] - POSIX file mode (including file-type bits).
+ * @param {bigint|number} [fields.size=0n] - File size.
+ * @param {bigint|number} [fields.atime=0n] - Access time (seconds since epoch).
+ * @param {bigint|number} [fields.mtime=0n] - Modification time (seconds since epoch).
+ * @param {bigint|number} [fields.ctime=0n] - Status-change time (seconds since epoch).
+ * @param {bigint|number} [fields.dev=0n] - Device id.
+ * @param {bigint|number} [fields.ino=0n] - Inode number.
+ * @param {number} [fields.nlink=1] - Hard-link count.
+ * @param {number} [fields.uid=0] - Owner uid.
+ * @param {number} [fields.gid=0] - Owner gid.
+ * @returns {Buffer} The 72-byte raw struct.
+ */
+function buildStatV2Frame({
+	id = "STA2",
+	error = 0,
+	mode = 0,
+	size = 0n,
+	atime = 0n,
+	mtime = 0n,
+	ctime = 0n,
+	dev = 0n,
+	ino = 0n,
+	nlink = 1,
+	uid = 0,
+	gid = 0
+} = {}) {
+	const buf = Buffer.alloc(72);
+	buf.write(id, 0, 4, "ascii");
+	buf.writeUInt32LE(error, 4);
+	buf.writeBigUInt64LE(BigInt(dev), 8);
+	buf.writeBigUInt64LE(BigInt(ino), 16);
+	buf.writeUInt32LE(mode, 24);
+	buf.writeUInt32LE(nlink, 28);
+	buf.writeUInt32LE(uid, 32);
+	buf.writeUInt32LE(gid, 36);
+	buf.writeBigUInt64LE(BigInt(size), 40);
+	buf.writeBigInt64LE(BigInt(atime), 48);
+	buf.writeBigInt64LE(BigInt(mtime), 56);
+	buf.writeBigInt64LE(BigInt(ctime), 64);
+	return buf;
+}
+
+/**
+ * Builds a raw sync_dent_v2 struct (same layout as buildStatV2Frame() minus
+ * the id, but with id "DNT2" and a trailing namelen + name) matching
+ * files.mjs's own parseDentV2Tail, for driving the fake sync stream in
+ * listV2() tests.
+ * @param {Object} fields - Struct field overrides, same shape as buildStatV2Frame(), plus:
+ * @param {string} fields.name - Entry name.
+ * @returns {Buffer} The 76-byte struct header plus the name bytes.
+ */
+function buildDentV2Frame({
+	error = 0,
+	mode = 0,
+	size = 0n,
+	atime = 0n,
+	mtime = 0n,
+	ctime = 0n,
+	dev = 0n,
+	ino = 0n,
+	nlink = 1,
+	uid = 0,
+	gid = 0,
+	name,
+	namelenOverride
+}) {
+	const nameBuf = Buffer.from(name, "utf8");
+	const buf = Buffer.alloc(76);
+	buf.write("DNT2", 0, 4, "ascii");
+	buf.writeUInt32LE(error, 4);
+	buf.writeBigUInt64LE(BigInt(dev), 8);
+	buf.writeBigUInt64LE(BigInt(ino), 16);
+	buf.writeUInt32LE(mode, 24);
+	buf.writeUInt32LE(nlink, 28);
+	buf.writeUInt32LE(uid, 32);
+	buf.writeUInt32LE(gid, 36);
+	buf.writeBigUInt64LE(BigInt(size), 40);
+	buf.writeBigInt64LE(BigInt(atime), 48);
+	buf.writeBigInt64LE(BigInt(mtime), 56);
+	buf.writeBigInt64LE(BigInt(ctime), 64);
+	// namelenOverride lets a test claim a namelen that doesn't match the actual
+	// name bytes sent - simulating a malformed/hostile device for the
+	// oversized-namelen rejection test, without needing to actually send
+	// however many bytes the claimed length says.
+	buf.writeUInt32LE(namelenOverride ?? nameBuf.length, 72);
+	return Buffer.concat([buf, nameBuf]);
 }
 
 /**
@@ -527,5 +625,483 @@ describe("files.stat", () => {
 	test("single-quote-escapes a path containing a single quote", async () => {
 		await droidsock.files.stat(fakeSocket, fakeStreamManager, "/sdcard/it's a file.txt");
 		expect(droidsock.shell.execute).toHaveBeenCalledWith(fakeSocket, fakeStreamManager, "stat '/sdcard/it'\\''s a file.txt'");
+	});
+});
+
+describe("files.pushV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated against a real device)", () => {
+	test("sends an SND2 path frame, a raw send_v2 setup struct, DATA + DONE, and resolves on OKAY", async () => {
+		const localFile = path.join(tmpDir, "push-v2-src.txt");
+		writeFileSync(localFile, "hello world v2");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				s.emit("data", buildFrame("OKAY", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2.txt");
+
+		expect(stream.writes[0].subarray(0, 4).toString("ascii")).toBe("SND2");
+		expect(stream.writes[0].subarray(8).toString("utf8")).toBe("/sdcard/dest-v2.txt");
+		// Raw 12-byte send_v2_setup struct (id + mode + flags) - not the generic
+		// id+value+payload shape, so it's exactly 12 bytes with no envelope.
+		expect(stream.writes[1].length).toBe(12);
+		expect(stream.writes[1].subarray(0, 4).toString("ascii")).toBe("SND2");
+		expect(stream.writes[1].readUInt32LE(4)).toBe(0o644);
+		expect(stream.writes[1].readUInt32LE(8)).toBe(0); // SYNC_FLAG_NONE
+		expect(stream.writes[2].subarray(0, 4).toString("ascii")).toBe("DATA");
+		expect(stream.writes[2].subarray(8).toString("utf8")).toBe("hello world v2");
+		expect(stream.writes[3].subarray(0, 4).toString("ascii")).toBe("DONE");
+		expect(stream.close).toHaveBeenCalled();
+	});
+
+	test("rejects with the device's message on FAIL", async () => {
+		const localFile = path.join(tmpDir, "push-v2-src.txt");
+		writeFileSync(localFile, "data");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				s.emit("data", buildFrame("FAIL", Buffer.from("Permission denied", "utf8")));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/system/dest.txt")).rejects.toThrow(
+			"SYNC send_v2 failed: Permission denied"
+		);
+		expect(stream.close).toHaveBeenCalled();
+	});
+
+	test('compression: "brotli" sets the SND2 setup flag and sends brotli-compressed DATA chunks', async () => {
+		const localFile = path.join(tmpDir, "push-v2-brotli.txt");
+		writeFileSync(localFile, "hello world v2");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				s.emit("data", buildFrame("OKAY", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2.txt", { compression: "brotli" });
+
+		expect(stream.writes[1].readUInt32LE(8)).toBe(1); // SYNC_FLAG_BROTLI
+		const dataPayload = stream.writes[2].subarray(8);
+		expect(brotliDecompressSync(dataPayload).toString("utf8")).toBe("hello world v2");
+	});
+
+	test('compression: "brotli" chunks raw input below the 64KB SYNC_DATA_MAX, leaving headroom for brotli expansion', async () => {
+		const localFile = path.join(tmpDir, "push-v2-brotli-large.bin");
+		// Incompressible random data - brotli can slightly expand this, which is
+		// exactly the case that would overflow SYNC_DATA_MAX if raw input were
+		// chunked at the full 64KB instead of the smaller compressed-mode chunk.
+		const big = crypto.randomBytes(48 * 1024 + 10);
+		writeFileSync(localFile, big);
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				s.emit("data", buildFrame("OKAY", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2.bin", { compression: "brotli" });
+
+		const dataFrames = stream.writes.filter((w) => w.subarray(0, 4).toString("ascii") === "DATA");
+		// FileHandle.read() is permitted to return fewer bytes than requested even
+		// before EOF, so more than 2 frames is legitimate - assert chunking
+		// occurred (more than one frame) and each respects the ceiling, rather
+		// than an exact count.
+		expect(dataFrames.length).toBeGreaterThan(1);
+		for (const frame of dataFrames) {
+			expect(frame.subarray(8).length).toBeLessThanOrEqual(64 * 1024);
+		}
+		const decompressed = Buffer.concat(dataFrames.map((f) => brotliDecompressSync(f.subarray(8))));
+		expect(decompressed.equals(big)).toBe(true);
+	});
+
+	test("rejects an invalid compression value without opening a stream", async () => {
+		const localFile = path.join(tmpDir, "push-v2-invalid.txt");
+		writeFileSync(localFile, "data");
+		const streamManager = { openStream: vi.fn() };
+
+		await expect(droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest.txt", { compression: "lz4" })).rejects.toThrow(
+			'Invalid compression: lz4 (must be "none" or "brotli")'
+		);
+		expect(streamManager.openStream).not.toHaveBeenCalled();
+	});
+
+	test.each([["07777"], [0o10000], [-1], [420.5], [null]])("rejects an invalid mode (%p) without opening a stream", async (mode) => {
+		const localFile = path.join(tmpDir, "push-v2-invalid-mode.txt");
+		writeFileSync(localFile, "data");
+		const streamManager = { openStream: vi.fn() };
+
+		await expect(droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest.txt", { mode })).rejects.toThrow(
+			"Invalid mode"
+		);
+		expect(streamManager.openStream).not.toHaveBeenCalled();
+	});
+
+	test("reads the local file from disk in SYNC_DATA_MAX-sized chunks rather than buffering it whole, sending multiple DATA frames", async () => {
+		const localFile = path.join(tmpDir, "push-v2-large.bin");
+		// One byte over the 64KB SYNC_DATA_MAX chunk ceiling - proves the file is
+		// read/sent in bounded pieces via a file handle, not loaded whole via
+		// readFile() (the pre-fix behavior this test guards against regressing to).
+		const big = crypto.randomBytes(64 * 1024 + 1);
+		writeFileSync(localFile, big);
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				s.emit("data", buildFrame("OKAY", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+		const onProgress = vi.fn();
+
+		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2-large.bin", { onProgress });
+
+		const dataFrames = stream.writes.filter((w) => w.subarray(0, 4).toString("ascii") === "DATA");
+		// FileHandle.read() is permitted to return fewer bytes than requested even
+		// before EOF, so more than 2 frames is legitimate - assert chunking
+		// occurred (more than one frame) and each respects the ceiling, rather
+		// than an exact count/size.
+		expect(dataFrames.length).toBeGreaterThan(1);
+		for (const frame of dataFrames) {
+			expect(frame.subarray(8).length).toBeLessThanOrEqual(64 * 1024);
+		}
+		expect(Buffer.concat(dataFrames.map((f) => f.subarray(8))).equals(big)).toBe(true);
+		expect(onProgress).toHaveBeenLastCalledWith({ bytesTransferred: big.length, totalBytes: big.length });
+	});
+
+	test("rejects rather than hanging if the stream closes before OKAY/FAIL arrives", async () => {
+		const localFile = path.join(tmpDir, "push-v2-stall.txt");
+		writeFileSync(localFile, "data");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				// Device disconnects mid-transfer - no OKAY/FAIL ever arrives.
+				s.emit("close");
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest.txt")).rejects.toThrow(
+			"Sync stream ended before a terminal frame arrived"
+		);
+	});
+});
+
+describe("files.pullV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated against a real device)", () => {
+	test("sends an RCV2 path frame, a raw recv_v2 setup struct, reassembles DATA, and writes the local file", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-dest.txt");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			// The setup struct is exactly 8 bytes (id + flags) - the path frame is
+			// 8 + pathlen, so this distinguishes the two without tracking order.
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				s.emit("data", buildFrame("DATA", Buffer.from("hello ", "utf8")));
+				s.emit("data", buildFrame("DATA", Buffer.from("world v2", "utf8")));
+				s.emit("data", buildFrame("DONE", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.txt", localFile);
+
+		expect(stream.writes[0].subarray(0, 4).toString("ascii")).toBe("RCV2");
+		expect(stream.writes[0].subarray(8).toString("utf8")).toBe("/sdcard/source.txt");
+		expect(stream.writes[1].length).toBe(8);
+		expect(stream.writes[1].readUInt32LE(4)).toBe(0); // SYNC_FLAG_NONE
+		expect(readFileSync(localFile, "utf8")).toBe("hello world v2");
+		expect(stream.close).toHaveBeenCalled();
+	});
+
+	test("rejects with the device's message on FAIL", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				s.emit("data", buildFrame("FAIL", Buffer.from("No such file or directory", "utf8")));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(
+			droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/missing.txt", path.join(tmpDir, "never-written.txt"))
+		).rejects.toThrow("SYNC recv_v2 failed: No such file or directory");
+		expect(stream.close).toHaveBeenCalled();
+	});
+
+	test('compression: "brotli" sets the RCV2 setup flag and decompresses incoming DATA chunks', async () => {
+		const localFile = path.join(tmpDir, "pull-v2-brotli.txt");
+		const compressed = brotliCompressSync(Buffer.from("hello world v2", "utf8"));
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				s.emit("data", buildFrame("DATA", compressed));
+				s.emit("data", buildFrame("DONE", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.txt", localFile, { compression: "brotli" });
+
+		expect(stream.writes[1].readUInt32LE(4)).toBe(1); // SYNC_FLAG_BROTLI
+		expect(readFileSync(localFile, "utf8")).toBe("hello world v2");
+	});
+
+	test("rejects an invalid compression value without opening a stream", async () => {
+		const streamManager = { openStream: vi.fn() };
+
+		await expect(
+			droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.txt", path.join(tmpDir, "never.txt"), {
+				compression: "zstd"
+			})
+		).rejects.toThrow('Invalid compression: zstd (must be "none" or "brotli")');
+		expect(streamManager.openStream).not.toHaveBeenCalled();
+	});
+
+	test("writes each DATA chunk to the local file as it arrives, reconstructing content across many chunks with cumulative progress", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-many-chunks.bin");
+		// Random (not repeated) bytes per chunk, so an out-of-order or dropped
+		// write would produce a detectably wrong file rather than accidentally
+		// matching via a repeated pattern.
+		const parts = Array.from({ length: 5 }, () => crypto.randomBytes(37));
+		const expected = Buffer.concat(parts);
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				for (const part of parts) s.emit("data", buildFrame("DATA", part));
+				s.emit("data", buildFrame("DONE", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+		const onProgress = vi.fn();
+
+		await droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile, { onProgress });
+
+		expect(readFileSync(localFile).equals(expected)).toBe(true);
+		expect(onProgress).toHaveBeenCalledTimes(5);
+		expect(onProgress).toHaveBeenLastCalledWith({ bytesTransferred: expected.length });
+	});
+
+	test("rejects rather than hanging if the stream closes before DONE/FAIL arrives", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-stall.bin");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				// Device disconnects mid-transfer - no DONE/FAIL ever arrives.
+				s.emit("close");
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile)).rejects.toThrow(
+			"Sync stream ended before a terminal frame arrived"
+		);
+	});
+
+	test("rejects a brotli chunk that decompresses past the output cap instead of allocating unbounded memory", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-brotli-bomb.bin");
+		// Highly compressible input - a small compressed payload that expands
+		// well past the 64KB SYNC_DATA_MAX cap, simulating a decompression bomb
+		// from a malformed/hostile device.
+		const bomb = brotliCompressSync(Buffer.alloc(200 * 1024, 0));
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				s.emit("data", buildFrame("DATA", bomb));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(
+			droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile, { compression: "brotli" })
+		).rejects.toThrow(/decompressed past the \d+-byte cap - rejecting as a likely decompression bomb/);
+	});
+
+	test("leaves no file at all - partial or otherwise - at localPath when the transfer fails mid-stream", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-partial.bin");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				// Some data arrives - proving a partial write really did happen
+				// on disk - before the device reports failure.
+				s.emit("data", buildFrame("DATA", Buffer.from("partial content", "utf8")));
+				s.emit("data", buildFrame("FAIL", Buffer.from("device storage error", "utf8")));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile)).rejects.toThrow(
+			"SYNC recv_v2 failed: device storage error"
+		);
+
+		// Unlike a mid-stream failure writing straight to localPath (which would
+		// leave a corrupted partial file there), the failed transfer wrote only
+		// to a sibling temp file, cleaned up on failure - so localPath was never
+		// created, and the temp dir has nothing left behind either.
+		expect(existsSync(localFile)).toBe(false);
+		expect(readdirSync(tmpDir)).toEqual([]);
+	});
+});
+
+describe("files.statV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated against a real device)", () => {
+	test("returns structured stat fields on success", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "STA2") {
+				s.emit("data", buildStatV2Frame({ mode: 0o100644, size: 123n, mtime: 1767225600n }));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		const result = await droidsock.files.statV2(fakeSocket, streamManager, "/sdcard/file.txt");
+
+		expect(stream.writes[0].subarray(0, 4).toString("ascii")).toBe("STA2");
+		expect(result).toEqual(expect.objectContaining({ mode: 0o100644, size: 123n, mtime: 1767225600n, isFile: true, isDirectory: false }));
+		expect(stream.close).toHaveBeenCalled();
+	});
+
+	test("throws with the errno when the reply's error field is non-zero", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "STA2") {
+				s.emit("data", buildStatV2Frame({ error: 2 })); // ENOENT
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.statV2(fakeSocket, streamManager, "/missing")).rejects.toThrow(
+			"SYNC stat_v2 failed for /missing: errno 2"
+		);
+	});
+
+	test("throws instead of silently interpreting a desynced reply whose leading id isn't STA2", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "STA2") {
+				// A 72-byte buffer that happens to carry the right shape but a
+				// different record id - e.g. a stale/misrouted reply from another
+				// SYNC command. Without validating the id, this would silently
+				// parse as a (wrong) successful stat result instead of erroring.
+				s.emit("data", buildStatV2Frame({ id: "DNT2", mode: 0o100644, size: 999n }));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.statV2(fakeSocket, streamManager, "/sdcard/file.txt")).rejects.toThrow(
+			"Unexpected SYNC frame during stat_v2: DNT2"
+		);
+	});
+
+	test("reassembles a stat_v2 reply split across multiple stream chunks", async () => {
+		const frame = buildStatV2Frame({ mode: 0o040755, size: 4096n });
+		const stream = createFakeSyncStream((writtenFrame, s) => {
+			if (writtenFrame.subarray(0, 4).toString("ascii") === "STA2") {
+				s.emit("data", frame.subarray(0, 30));
+				s.emit("data", frame.subarray(30));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		const result = await droidsock.files.statV2(fakeSocket, streamManager, "/sdcard");
+		expect(result).toEqual(expect.objectContaining({ isDirectory: true, size: 4096n }));
+	});
+});
+
+describe("files.listV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated against a real device)", () => {
+	test("collects DNT2 entries until DONE", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("data", buildDentV2Frame({ mode: 0o040755, size: 4096n, mtime: 1767225600n, name: "subdir" }));
+				s.emit("data", buildDentV2Frame({ mode: 0o100644, size: 123n, mtime: 1767225600n, name: "file.txt" }));
+				s.emit("data", buildFrame("DONE", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		const entries = await droidsock.files.listV2(fakeSocket, streamManager, "/sdcard");
+
+		expect(stream.writes[0].subarray(0, 4).toString("ascii")).toBe("LIS2");
+		expect(entries).toEqual([
+			expect.objectContaining({ name: "subdir", isDirectory: true, size: 4096n }),
+			expect.objectContaining({ name: "file.txt", isFile: true, size: 123n })
+		]);
+		expect(stream.close).toHaveBeenCalled();
+	});
+
+	test("rejects on FAIL with the device's message", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("data", buildFrame("FAIL", Buffer.from("No such file or directory", "utf8")));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.listV2(fakeSocket, streamManager, "/missing")).rejects.toThrow(
+			"SYNC list_v2 failed: No such file or directory"
+		);
+	});
+
+	test("a DNT2 entry split across chunks reassembles correctly", async () => {
+		const frame = buildDentV2Frame({ mode: 0o100644, size: 5n, mtime: 1767225600n, name: "split.txt" });
+		const stream = createFakeSyncStream((writtenFrame, s) => {
+			if (writtenFrame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("data", frame.subarray(0, 40));
+				s.emit("data", frame.subarray(40));
+				s.emit("data", buildFrame("DONE", 0));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		const entries = await droidsock.files.listV2(fakeSocket, streamManager, "/sdcard");
+		expect(entries).toEqual([expect.objectContaining({ name: "split.txt", size: 5n })]);
+	});
+
+	test("rejects rather than hanging if the stream closes before DONE/FAIL arrives", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("close");
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.listV2(fakeSocket, streamManager, "/sdcard")).rejects.toThrow(
+			"Sync stream ended before enough bytes arrived"
+		);
+	});
+
+	test("rejects a DNT2 entry claiming an oversized namelen instead of buffering forever waiting for it", async () => {
+		// A malformed/hostile device could set namelen (a plain uint32, no
+		// protocol-defined ceiling) arbitrarily large - readBytes(namelen) would
+		// then wait indefinitely for that many bytes to arrive, growing the
+		// reader's internal buffer without bound. The rejection must happen
+		// before any name bytes are read, so the real (small) name below is
+		// never actually sent - only the oversized claimed length is.
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("data", buildDentV2Frame({ mode: 0o100644, size: 1n, name: "x", namelenOverride: 10 * 1024 * 1024 }));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.listV2(fakeSocket, streamManager, "/sdcard")).rejects.toThrow(
+			"list_v2 entry name length 10485760 exceeds the maximum of 4096"
+		);
+	});
+
+	test("rejects a FAIL frame claiming an oversized payload length instead of buffering forever waiting for it", async () => {
+		// Same class of issue as the oversized-namelen case above, but for the
+		// FAIL frame's own declared length - a malformed/hostile device could
+		// claim an arbitrarily large error-message length with no payload bytes
+		// ever actually following. buildFrame("FAIL", <number>) builds exactly
+		// that: a header claiming the length with an empty payload.
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "LIS2") {
+				s.emit("data", buildFrame("FAIL", 10 * 1024 * 1024));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.listV2(fakeSocket, streamManager, "/sdcard")).rejects.toThrow(
+			"list_v2 FAIL payload length 10485760 exceeds the maximum of 65536"
+		);
 	});
 });
