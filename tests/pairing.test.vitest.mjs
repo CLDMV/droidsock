@@ -125,8 +125,10 @@ function createServerCipher(keyMaterial) {
  * @param {boolean} [opts.wrongPassword] - Derive the server's password scalar from a different code, simulating a PIN mismatch.
  * @param {boolean} [opts.corruptPeerInfoAck] - Send back garbage instead of a valid encrypted PeerInfo ack.
  * @param {boolean} [opts.emptyPeerInfoAck] - Send back a validly-encrypted PeerInfo ack whose plaintext is 0 bytes.
+ * @param {boolean} [opts.shortPeerInfoAck] - Send back an encrypted PeerInfo ack under 16 bytes - too short to even contain a GCM tag.
  * @param {boolean} [opts.oversizedPayload] - Reply to the client's first packet with a header claiming an oversized payload, no payload sent.
  * @param {boolean} [opts.wrongVersion] - Reply to the client's first packet with a header carrying an unsupported version byte.
+ * @param {boolean} [opts.wrongVersionStall] - Like wrongVersion, but only send the 6-byte header (a normal, under-ceiling payloadLength) and never the payload - the payload never arriving must not stop the version from being caught.
  * @returns {Promise<{port: number, close: () => Promise<void>}>} Server handle.
  */
 async function startFakePairingServer(pairingCode, opts = {}) {
@@ -174,6 +176,14 @@ async function startFakePairingServer(pairingCode, opts = {}) {
 						socket.write(Buffer.concat([header, payload]));
 						continue;
 					}
+					if (opts.wrongVersionStall) {
+						const header = Buffer.alloc(6);
+						header.writeUInt8(99, 0); // bogus version
+						header.writeUInt8(PACKET_TYPE_SPAKE2_MSG, 1);
+						header.writeUInt32BE(32, 2); // a normal, under-ceiling length - never sent
+						socket.write(header);
+						continue;
+					}
 
 					const clientMsg = packet.payload;
 
@@ -206,7 +216,9 @@ async function startFakePairingServer(pairingCode, opts = {}) {
 						? crypto.randomBytes(32)
 						: opts.emptyPeerInfoAck
 							? cipher.encrypt(Buffer.alloc(0))
-							: cipher.encrypt(Buffer.concat([Buffer.from([1]), Buffer.from("fake-device-guid", "utf8")]));
+							: opts.shortPeerInfoAck
+								? crypto.randomBytes(5)
+								: cipher.encrypt(Buffer.concat([Buffer.from([1]), Buffer.from("fake-device-guid", "utf8")]));
 					socket.write(encodePairingPacket(PACKET_TYPE_PEER_INFO, ackPayload));
 				}
 			}
@@ -274,6 +286,13 @@ describe("pairing.pair", () => {
 		await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir: tmpKeyDir, timeoutMs: 2000 })).rejects.toThrow();
 	});
 
+	test("rejects a too-short PEER_INFO ack with a clear protocol error, not a low-level OpenSSL tag-length error", async () => {
+		server = await startFakePairingServer("123456", { shortPeerInfoAck: true });
+		await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir: tmpKeyDir, timeoutMs: 2000 })).rejects.toThrow(
+			/too short to contain a 16-byte GCM tag/
+		);
+	});
+
 	test("rejects an empty pairing code without opening a connection", async () => {
 		await expect(droidsock.pairing.pair("127.0.0.1", 12345, "", { keyDir: tmpKeyDir })).rejects.toThrow(/pairingCode/);
 	});
@@ -294,6 +313,21 @@ describe("pairing.pair", () => {
 		await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir: tmpKeyDir, timeoutMs: 2000 })).rejects.toThrow(
 			/[Uu]nsupported pairing packet version/
 		);
+	});
+
+	test("catches an unsupported version from the header alone, without waiting for a payload that never arrives", async () => {
+		server = await startFakePairingServer("123456", { wrongVersionStall: true });
+		const start = Date.now();
+
+		// The header (6 bytes: version, type, payloadLength) is sent, but the
+		// claimed 32-byte payload never is - version validation must happen as
+		// soon as the header is available, not only once the full frame has
+		// buffered. A long timeoutMs proves the rejection comes from the
+		// version check itself, not from timing out.
+		await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir: tmpKeyDir, timeoutMs: 5000 })).rejects.toThrow(
+			/[Uu]nsupported pairing packet version/
+		);
+		expect(Date.now() - start).toBeLessThan(1000);
 	});
 
 	test("rejects a PeerInfo payload that decrypts to 0 bytes with a clear error, not a raw RangeError", async () => {

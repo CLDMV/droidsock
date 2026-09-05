@@ -264,16 +264,23 @@ function createPacketReader() {
 
 			for (;;) {
 				if (buffered.length < 6) break;
+
+				// Validate everything the header itself carries as soon as it's
+				// available, before waiting on the payload - a peer that sends
+				// just the 6-byte header claiming an unsupported version and a
+				// payload it never actually sends would otherwise stall here
+				// forever (waiting on bytes that may never come) instead of
+				// failing immediately with the real version error.
+				const version = buffered.readUInt8(0);
+				if (version !== PAIRING_PACKET_VERSION) {
+					throw new Error(`Unsupported pairing packet version: ${version} (expected ${PAIRING_PACKET_VERSION})`);
+				}
+
 				const payloadLength = buffered.readUInt32BE(2);
 				if (payloadLength > MAX_PACKET_PAYLOAD) {
 					throw new Error(`Pairing packet payload too large: ${payloadLength} bytes (max ${MAX_PACKET_PAYLOAD})`);
 				}
 				if (buffered.length < 6 + payloadLength) break;
-
-				const version = buffered.readUInt8(0);
-				if (version !== PAIRING_PACKET_VERSION) {
-					throw new Error(`Unsupported pairing packet version: ${version} (expected ${PAIRING_PACKET_VERSION})`);
-				}
 
 				packets.push({
 					version,
@@ -374,6 +381,15 @@ function createMessageCipher(keyMaterial) {
 			return Buffer.concat([ciphertext, cipher.getAuthTag()]);
 		},
 		decrypt(ciphertextAndTag) {
+			// Checked before touching decSequence - a too-short payload never
+			// reaches a real decrypt attempt, so no sequence number is consumed
+			// for a malformed frame. Without this, a negative subarray() start
+			// silently clamps to 0, handing setAuthTag() a short tag and
+			// letting a low-level OpenSSL error surface instead of a clear
+			// protocol error.
+			if (ciphertextAndTag.length < 16) {
+				throw new Error(`Encrypted PeerInfo payload is too short to contain a 16-byte GCM tag: ${ciphertextAndTag.length} bytes`);
+			}
 			const nonce = nonceFor(decSequence++);
 			const tag = ciphertextAndTag.subarray(ciphertextAndTag.length - 16);
 			const ciphertext = ciphertextAndTag.subarray(0, ciphertextAndTag.length - 16);
