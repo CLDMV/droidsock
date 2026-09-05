@@ -22,6 +22,7 @@ describe("index.mjs default export", () => {
 				"auth",
 				"config",
 				"connection",
+				"device",
 				"devices",
 				"discover",
 				"files",
@@ -42,13 +43,22 @@ describe("index.mjs default export", () => {
 		}
 	});
 
-	test("devices module exposes the documented connection-management functions", async () => {
+	test("device module exposes the single-target connect/disconnect functions", async () => {
 		const droidsock = await createDroidSock();
 		try {
-			expect(typeof droidsock.devices.connect).toBe("function");
+			expect(typeof droidsock.device.connect).toBe("function");
+			expect(typeof droidsock.device.disconnect).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("devices module exposes the collection-wide list/disconnect/get functions", async () => {
+		const droidsock = await createDroidSock();
+		try {
 			expect(typeof droidsock.devices.list).toBe("function");
 			expect(typeof droidsock.devices.disconnect).toBe("function");
-			expect(typeof droidsock.devices.disconnectAll).toBe("function");
+			expect(typeof droidsock.devices.get).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
