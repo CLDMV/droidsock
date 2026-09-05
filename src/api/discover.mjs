@@ -601,6 +601,15 @@ export async function mdns(options = {}) {
 	if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
 		throw new Error(`Invalid timeoutMs: ${timeoutMs} (must be a positive integer)`);
 	}
+	// A non-string here would otherwise surface much later and much less
+	// clearly - isMulticastAddress() calling .split() on it, or a dgram
+	// method rejecting it - once inside the async bind/send flow below.
+	if (address !== undefined && typeof address !== "string") {
+		throw new Error(`Invalid address: ${address} (must be a string)`);
+	}
+	if (multicastInterface !== undefined && typeof multicastInterface !== "string") {
+		throw new Error(`Invalid multicastInterface: ${multicastInterface} (must be a string)`);
+	}
 
 	// A literal address selects the family on its own; a non-literal (a plain
 	// hostname, or nothing) leaves it undetected and falls through to the

@@ -887,6 +887,17 @@ describe("discover.mdns - IPv6 (AAAA), over the existing IPv4 (udp4) transport",
 		await expect(droidsock.discover.mdns({ family: 6, address: "127.0.0.1", port: 5353 })).rejects.toThrow("Invalid address");
 	});
 
+	test("rejects a non-string address without ever opening a socket", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ address: 12345 })).rejects.toThrow("Invalid address");
+		await expect(droidsock.discover.mdns({ address: {} })).rejects.toThrow("Invalid address");
+	});
+
+	test("rejects a non-string multicastInterface", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ multicastInterface: 12345 })).rejects.toThrow("Invalid multicastInterface");
+	});
+
 	test("AAAA rdata resolves a device entry - correlation doesn't depend on the query's own transport family", async () => {
 		droidsock = await createDroidSock();
 
