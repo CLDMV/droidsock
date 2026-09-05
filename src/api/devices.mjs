@@ -13,14 +13,16 @@
 
 /**
  * Device connection registry API module for DroidSock - the collection-wide
- * counterpart to device.mjs's single-target connect()/disconnect(). Every
- * connected device lives directly on this module's own slothlet namespace
- * (self.devices / api.devices) as a real, individually-addressable leaf
- * mounted by device.connect() (docs/RELOAD.md), alongside this module's own
- * list/disconnect/get exports. Naming: the module boundary itself
- * disambiguates single vs. collection, so `disconnect()` here takes no
- * arguments and means "all" - `api.device.disconnect(host, port)` is the
- * single-target op.
+ * counterpart to device.mjs's single-target connect()/disconnect()/remove().
+ * Every device that has ever been connected lives directly on this module's
+ * own slothlet namespace (self.devices / api.devices) as a real,
+ * individually-addressable leaf mounted by device.connect() (docs/RELOAD.md)
+ * - disconnecting a device does NOT unmount its leaf (see device.mjs's
+ * module doc), so list/disconnect/remove/get here operate over every known
+ * device, connected or not, unless noted. Naming: the module boundary itself
+ * disambiguates single vs. collection, so `disconnect()`/`remove()` here
+ * take no arguments and mean "all" - `api.device.disconnect(host, port)` /
+ * `api.device.remove(host, port)` are the single-target ops.
  */
 
 import { self } from "@cldmv/slothlet/runtime";
@@ -28,9 +30,9 @@ import { parseHostPort, sanitizeKey } from "./utils.mjs";
 
 /**
  * Returns the live device-leaf entries under self.devices, excluding this
- * module's own list/disconnect/get siblings (identified by having a callable
- * isConnected() - the module's own exports are functions, not objects, so
- * this needs no hardcoded name list).
+ * module's own list/disconnect/remove/get siblings (identified by having a
+ * callable isConnected() - the module's own exports are functions, not
+ * objects, so this needs no hardcoded name list).
  * @returns {Array<Object>} Device leaf entries (regardless of connected state)
  */
 function deviceEntries() {
@@ -41,7 +43,10 @@ function deviceEntries() {
 }
 
 /**
- * Lists all currently-connected devices.
+ * Lists all currently-connected devices. A device that's known but currently
+ * disconnected (still mounted, reconnectable via device.connect()) is NOT
+ * included here - use get()/deviceEntries-style enumeration if you need
+ * every known device regardless of connection state.
  * @returns {Array<Object>} Connected device leaves
  */
 export function list() {
@@ -49,17 +54,16 @@ export function list() {
 }
 
 /**
- * Looks up a connected device leaf by "host:port" string or by the leaf
- * object itself (as returned by device.connect()). This is the safe way to
- * re-resolve a leaf reference - e.g. after a prior disconnect() call left an
- * old reference with none of its composed methods (see device.mjs's
- * buildDeviceLeaf module doc) - instead of calling methods on a stale
- * object: get() returns undefined for anything not currently mounted, rather
- * than the stale reference itself.
+ * Looks up a device leaf - connected or currently disconnected - by
+ * "host:port" string or by the leaf object itself (as returned by
+ * device.connect()). Since disconnect() no longer unmounts a leaf, this
+ * reliably re-resolves the SAME object across a disconnect/reconnect cycle;
+ * it only returns undefined for a device that was never connected or has
+ * since been forgotten via remove().
  * @param {string|Object} idOrLeaf - "host:port" (bracket the host for IPv6,
  *   e.g. "[2001:db8::1]:5555"), a bare host with the default port applied, or
  *   a device leaf object.
- * @returns {Object|undefined} The live device leaf, or undefined if not mounted.
+ * @returns {Object|undefined} The device leaf, or undefined if not mounted.
  */
 export function get(idOrLeaf) {
 	let host, port;
@@ -73,23 +77,42 @@ export function get(idOrLeaf) {
 }
 
 /**
- * Disconnects every connected device, including stale entries left over from
- * an unexpected disconnect (not just the ones list() returns). Takes no
- * arguments - the module boundary already means "all"; use
- * `api.device.disconnect(host, port)` to disconnect one. Rejecting any
- * argument here (rather than silently ignoring it) catches a caller who
- * confuses this with the single-target op before it disconnects everything
- * by accident.
- * @returns {Promise<number>} Number of devices disconnected
+ * Disconnects every known device (connected or not - a no-op for one
+ * that's already disconnected), keeping every leaf mounted for later
+ * reconnection. Takes no arguments - the module boundary already means
+ * "all"; use `api.device.disconnect(host, port)` to disconnect one.
+ * Rejecting any argument here (rather than silently ignoring it) catches a
+ * caller who confuses this with the single-target op before it disconnects
+ * everything by accident. Synchronous - see device.mjs's disconnect() for why.
+ * @returns {number} Number of devices disconnected
  */
-export async function disconnect() {
+export function disconnect() {
 	if (arguments.length > 0) {
 		throw new Error("devices.disconnect() takes no arguments - it disconnects ALL devices. Use device.disconnect(host, port) for one.");
+	}
+	let count = 0;
+	for (const entry of deviceEntries()) {
+		entry.disconnect();
+		count++;
+	}
+	return count;
+}
+
+/**
+ * Forgets every known device - disconnects each one (if still connected)
+ * and unmounts its leaf. Takes no arguments, same reasoning as
+ * disconnect(); use `api.device.remove(host, port)` to forget just one.
+ * Async - this is the operation that does real api-tree surgery.
+ * @returns {Promise<number>} Number of devices removed
+ */
+export async function remove() {
+	if (arguments.length > 0) {
+		throw new Error("devices.remove() takes no arguments - it removes ALL devices. Use device.remove(host, port) for one.");
 	}
 	const entries = deviceEntries();
 	let count = 0;
 	for (const entry of entries) {
-		await entry.disconnect();
+		await entry.remove();
 		count++;
 	}
 	return count;
