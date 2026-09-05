@@ -16,6 +16,7 @@
  */
 
 import { self } from "@cldmv/slothlet/runtime";
+import { quoteShellArg } from "./utils.mjs";
 
 /**
  * Executes a shell command and returns the output
@@ -274,7 +275,7 @@ export const commands = {
 	 * @returns {Promise<string>} Directory listing
 	 */
 	ls: async (socket, streamManager, path = ".") => {
-		return await execute(socket, streamManager, `ls -la "${path}"`);
+		return await execute(socket, streamManager, `ls -la ${quoteShellArg(path)}`);
 	},
 
 	/**
@@ -295,7 +296,7 @@ export const commands = {
 	 * @returns {Promise<string>} Property value(s)
 	 */
 	getprop: async (socket, streamManager, prop = null) => {
-		const cmd = prop ? `getprop "${prop}"` : "getprop";
+		const cmd = prop ? `getprop ${quoteShellArg(prop)}` : "getprop";
 		return await execute(socket, streamManager, cmd);
 	},
 
@@ -337,7 +338,7 @@ export const commands = {
 	 * @returns {Promise<string>} Command result
 	 */
 	screenshot: async (socket, streamManager, filename = "/sdcard/screenshot.png") => {
-		return await execute(socket, streamManager, `screencap -p "${filename}"`);
+		return await execute(socket, streamManager, `screencap -p ${quoteShellArg(filename)}`);
 	},
 
 	/**
@@ -370,7 +371,7 @@ export const commands = {
 	 * @returns {Promise<string>} Command result
 	 */
 	keypress: async (socket, streamManager, key) => {
-		return await execute(socket, streamManager, `input keyevent ${key}`);
+		return await execute(socket, streamManager, `input keyevent ${quoteShellArg(key)}`);
 	},
 
 	/**
@@ -382,8 +383,11 @@ export const commands = {
 	 * @returns {Promise<string>} Command result
 	 */
 	launchApp: async (socket, streamManager, packageName, activity = "") => {
-		const activityArg = activity ? `/${activity}` : "";
-		return await execute(socket, streamManager, `am start -n ${packageName}${activityArg}`);
+		// package/activity must reach `am start -n` as a single argument (a
+		// single "/"-joined token), so the combined value is quoted as one
+		// unit rather than quoting packageName and activity separately.
+		const target = activity ? `${packageName}/${activity}` : packageName;
+		return await execute(socket, streamManager, `am start -n ${quoteShellArg(target)}`);
 	},
 
 	/**
@@ -394,7 +398,7 @@ export const commands = {
 	 * @returns {Promise<string>} Command result
 	 */
 	killApp: async (socket, streamManager, packageName) => {
-		return await execute(socket, streamManager, `am force-stop ${packageName}`);
+		return await execute(socket, streamManager, `am force-stop ${quoteShellArg(packageName)}`);
 	},
 
 	/**
@@ -406,8 +410,8 @@ export const commands = {
 	 * @returns {Promise<string>} Installation result
 	 */
 	installApk: async (socket, streamManager, apkPath, flags = []) => {
-		const flagsStr = flags.length > 0 ? ` ${flags.join(" ")}` : "";
-		return await execute(socket, streamManager, `pm install${flagsStr} "${apkPath}"`);
+		const flagsStr = flags.length > 0 ? ` ${flags.map(quoteShellArg).join(" ")}` : "";
+		return await execute(socket, streamManager, `pm install${flagsStr} ${quoteShellArg(apkPath)}`);
 	},
 
 	/**
@@ -418,6 +422,6 @@ export const commands = {
 	 * @returns {Promise<string>} Uninstall result
 	 */
 	uninstallApp: async (socket, streamManager, packageName) => {
-		return await execute(socket, streamManager, `pm uninstall ${packageName}`);
+		return await execute(socket, streamManager, `pm uninstall ${quoteShellArg(packageName)}`);
 	}
 };
