@@ -21,21 +21,21 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 
 ## ✨ What's New
 
-### Latest: v1.2.0 (September 2026)
+### Latest: v1.3.0 (September 2026)
+
+- **🚨 Breaking**: the `device` module is now `devices` - connected devices are mounted as composed API leaves at `api.devices.<host_port>`, and disconnect calls (`device.disconnect()`, `api.devices.disconnect()`/`disconnectAll()`) are now `async`.
+- **`device.reverse()`** (experimental) - completes port forwarding with the device → host direction.
+- **`pairing.pair()`** (experimental) - Wi-Fi pairing (SPAKE2-over-Ed25519 + TLS 1.3) for Android 11+ wireless debugging.
+- **Streaming APK install** (experimental) - `device.install()` now tries `exec:cmd`-based streaming install first, falling back to the classic push-then-install flow.
+- **SYNC V2 (64-bit)** - `pushV2` / `pullV2` / `statV2` / `listV2` lift the legacy 32-bit size ceiling, with optional brotli compression.
+- **Hardening** - closed a shell-injection gap in `devices.mjs`'s convenience shortcuts, capped several unbounded device-controlled memory allocations in the SYNC V2 paths, and fixed a handful of mid-transfer disconnect/failure edge cases.
+- [View full v1.3.0 Changelog](./docs/changelog/v1/v1.3.0.md)
+
+### Previous: v1.2.0 (September 2026)
 
 - **Device discovery** - `discover.subnet()` sweeps a CIDR range for a reachable ADB TCP port; `discover.mdns()` is a hand-written mDNS client (no dependency) for wireless-debugging-advertised devices. Both **experimental** - see [#1](https://github.com/CLDMV/droidsock/issues/1).
 - **Shell-injection fix** - every `files.*` shell-based method now single-quote-escapes remote paths before interpolation; `mkdir`/`chmod`'s mode and `find`'s `maxDepth`/`type` are validated too.
 - [View full v1.2.0 Changelog](./docs/changelog/v1/v1.2.0.md)
-
-### Previous: v1.1.0 (September 2026)
-
-- **`list` / `stat` fixed** - v1.0.0 shipped both throwing due to a dangling reference to a module that never existed in the repo.
-- **Binary-safe `list()`** - prefers the ADB SYNC `LIST` command, falls back to shell `ls -la` parsing only when SYNC isn't usable.
-- **`push` / `pull` implemented (experimental)** - real binary file transfer via the ADB SYNC sub-protocol.
-- **`device.reboot()`** (experimental) - the real ADB `reboot:` service, including bootloader/recovery/sideload modes.
-- **`device.forward()`** (experimental) - TCP port forwarding (host → device direction).
-- **`device.install()`** (experimental) - local APK install via the classic push-then-install flow.
-- [View full v1.1.0 Changelog](./docs/changelog/v1/v1.1.0.md)
 
 📚 **For complete version history and detailed release notes, see [docs/changelog/](./docs/changelog/) folder.**
 
