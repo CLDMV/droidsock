@@ -182,8 +182,20 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, connection, streamMana
 			if ((connection.deviceFeatures || []).includes("cmd")) {
 				try {
 					return await self.install.streaming(connection.socket, streamManager, localPath, installOptions);
-				} catch {
-					// Fall through to the classic push-then-install flow.
+				} catch (streamingError) {
+					// Fall through to the classic push-then-install flow - but if
+					// that ALSO fails, surface the original streaming failure
+					// alongside it. Discarding streamingError unconditionally
+					// would lose the real cause whenever classic fails too (the
+					// caller would only ever see the classic error).
+					try {
+						return await self.install.classic(connection.socket, streamManager, localPath, installOptions);
+					} catch (classicError) {
+						throw new Error(
+							`Streaming install failed (${streamingError.message}), and the classic fallback also failed: ${classicError.message}`,
+							{ cause: classicError }
+						);
+					}
 				}
 			}
 			return await self.install.classic(connection.socket, streamManager, localPath, installOptions);

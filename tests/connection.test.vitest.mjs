@@ -159,3 +159,63 @@ describe("devices leaf isConnected() - reflects unexpected socket teardown, not 
 		}
 	});
 });
+
+describe("devices leaf install() - streaming-then-classic fallback error handling", () => {
+	let fakeServer;
+	let keyDir;
+
+	afterEach(async () => {
+		if (fakeServer) {
+			await new Promise((resolve) => fakeServer.server.close(resolve));
+			fakeServer = null;
+		}
+		if (keyDir) rmSync(keyDir, { recursive: true, force: true });
+	});
+
+	test("surfaces both failures when the streaming attempt fails and the classic fallback also fails", async () => {
+		fakeServer = await createFakeAdbServer();
+		keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-connection-test-"));
+
+		const droidsock = await createDroidSock();
+		try {
+			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			// Force the streaming attempt by hand - the fake server's minimal
+			// handshake doesn't advertise "cmd" for real.
+			device.connection.deviceFeatures = ["cmd"];
+
+			vi.spyOn(droidsock.install, "streaming").mockRejectedValue(new Error("device disconnected mid-transfer"));
+			vi.spyOn(droidsock.install, "classic").mockRejectedValue(new Error("push failed: permission denied"));
+
+			// Previously the streaming error was silently discarded (bare
+			// `catch {}`), so the caller only ever saw the classic error -
+			// losing the original failure that actually motivated the fallback.
+			await expect(device.install("/local/app.apk")).rejects.toThrow(
+				"Streaming install failed (device disconnected mid-transfer), and the classic fallback also failed: push failed: permission denied"
+			);
+
+			await device.disconnect();
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("falls back to classic silently when it succeeds, discarding the streaming error as intended", async () => {
+		fakeServer = await createFakeAdbServer();
+		keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-connection-test-"));
+
+		const droidsock = await createDroidSock();
+		try {
+			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			device.connection.deviceFeatures = ["cmd"];
+
+			vi.spyOn(droidsock.install, "streaming").mockRejectedValue(new Error("cmd package install not supported"));
+			vi.spyOn(droidsock.install, "classic").mockResolvedValue("Success\n");
+
+			await expect(device.install("/local/app.apk")).resolves.toBe("Success\n");
+
+			await device.disconnect();
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+});
