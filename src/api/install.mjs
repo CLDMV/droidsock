@@ -17,7 +17,7 @@
 
 import { self } from "@cldmv/slothlet/runtime";
 import path from "node:path";
-import { open, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 
 // Chunk size for stdin writes on the exec:cmd stream. Not protocol-mandated -
 // ADB streams are otherwise unbounded per WRTE frame - but kept aligned with
@@ -71,9 +71,15 @@ export async function classic(socket, streamManager, localPath, options = {}) {
  * stdin-close signal (ADB streams have no half-close). Reads the local file
  * in EXEC_WRITE_CHUNK-sized pieces via a file handle rather than loading the
  * whole APK into memory up front, so peak host memory stays bounded to one
- * chunk regardless of APK size. EXPERIMENTAL - this is droidsock's first use
- * of an `exec:` stream and its first case of writing raw binary data as a
- * command's stdin; not yet validated against a real device, and requires
+ * chunk regardless of APK size. The file is opened once and its size is read
+ * from that open handle (fileHandle.stat(), not fs.stat(localPath)) - a
+ * separate stat-then-open on the path would be a TOCTOU (CodeQL
+ * js/file-system-race): the file could be replaced between the two calls,
+ * making the declared `-S <size>` not match what's actually read. Once
+ * opened, the handle's descriptor refers to the file's inode regardless of
+ * what later happens to the path. EXPERIMENTAL - this is droidsock's first
+ * use of an `exec:` stream and its first case of writing raw binary data as
+ * a command's stdin; not yet validated against a real device, and requires
  * the device to advertise the "cmd" feature. See #2.
  * @param {Object} ___socket - ADB socket (unused - the exec stream is opened via streamManager)
  * @param {Object} streamManager - Stream manager instance
@@ -85,50 +91,53 @@ export async function classic(socket, streamManager, localPath, options = {}) {
  */
 export async function streaming(___socket, streamManager, localPath, options = {}) {
 	const { flags = [], onProgress } = options;
-	const { size: totalBytes } = await stat(localPath);
-	const flagsStr = flags.length > 0 ? ` ${flags.join(" ")}` : "";
-	const destination = `exec:cmd package install -S ${totalBytes}${flagsStr}`;
-
-	const stream = await streamManager.openStream(destination);
 	const fileHandle = await open(localPath, "r");
 	try {
-		let output = Buffer.alloc(0);
-		let stopped = false;
-		const closed = new Promise((resolve, reject) => {
-			stream.on("data", (chunk) => {
-				output = Buffer.concat([output, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+		const { size: totalBytes } = await fileHandle.stat();
+		const flagsStr = flags.length > 0 ? ` ${flags.join(" ")}` : "";
+		const destination = `exec:cmd package install -S ${totalBytes}${flagsStr}`;
+
+		const stream = await streamManager.openStream(destination);
+		try {
+			let output = Buffer.alloc(0);
+			let stopped = false;
+			const closed = new Promise((resolve, reject) => {
+				stream.on("data", (chunk) => {
+					output = Buffer.concat([output, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+				});
+				stream.once("close", resolve);
+				stream.once("error", reject);
 			});
-			stream.once("close", resolve);
-			stream.once("error", reject);
-		});
-		// Reading from disk and writing to the stream both cross real async
-		// boundaries, unlike a synchronous loop over an already-buffered file -
-		// this attaches a handler immediately (so a mid-transfer stream error
-		// can't surface as an unhandled rejection in the gap before the loop
-		// reaches `await closed` below) and stops the loop promptly instead of
-		// continuing to read/write after the stream has already died.
-		closed.catch(() => {
-			stopped = true;
-		});
+			// Reading from disk and writing to the stream both cross real async
+			// boundaries, unlike a synchronous loop over an already-buffered file -
+			// this attaches a handler immediately (so a mid-transfer stream error
+			// can't surface as an unhandled rejection in the gap before the loop
+			// reaches `await closed` below) and stops the loop promptly instead of
+			// continuing to read/write after the stream has already died.
+			closed.catch(() => {
+				stopped = true;
+			});
 
-		let bytesTransferred = 0;
-		while (!stopped) {
-			// A fresh buffer per read, never reused across iterations - Node's
-			// socket.write() may queue the buffer it's given rather than copy it
-			// immediately, so writing the same backing buffer again before a
-			// prior write has actually flushed would corrupt in-flight data.
-			const buffer = Buffer.alloc(EXEC_WRITE_CHUNK);
-			const { bytesRead } = await fileHandle.read(buffer, 0, EXEC_WRITE_CHUNK, null);
-			if (bytesRead === 0) break;
-			await stream.write(bytesRead === EXEC_WRITE_CHUNK ? buffer : buffer.subarray(0, bytesRead));
-			bytesTransferred += bytesRead;
-			if (onProgress) onProgress({ bytesTransferred, totalBytes });
+			let bytesTransferred = 0;
+			while (!stopped) {
+				// A fresh buffer per read, never reused across iterations - Node's
+				// socket.write() may queue the buffer it's given rather than copy it
+				// immediately, so writing the same backing buffer again before a
+				// prior write has actually flushed would corrupt in-flight data.
+				const buffer = Buffer.alloc(EXEC_WRITE_CHUNK);
+				const { bytesRead } = await fileHandle.read(buffer, 0, EXEC_WRITE_CHUNK, null);
+				if (bytesRead === 0) break;
+				await stream.write(bytesRead === EXEC_WRITE_CHUNK ? buffer : buffer.subarray(0, bytesRead));
+				bytesTransferred += bytesRead;
+				if (onProgress) onProgress({ bytesTransferred, totalBytes });
+			}
+
+			await closed;
+			return output.toString("utf8");
+		} finally {
+			stream.close();
 		}
-
-		await closed;
-		return output.toString("utf8");
 	} finally {
 		await fileHandle.close();
-		stream.close();
 	}
 }
