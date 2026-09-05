@@ -169,6 +169,18 @@ describe("install.streaming (EXPERIMENTAL - exec:cmd package install, not yet va
 		expect(streamManager.openStream).toHaveBeenCalledWith("exec:cmd package install -S 1 -r -d");
 	});
 
+	test.each([["not-an-array"], [null], [[1, 2]], [[""]], [["-r --user 0"]]])(
+		"rejects an invalid flags value (%p) without opening a stream",
+		async (flags) => {
+			const localFile = path.join(tmpDir, "app.apk");
+			writeFileSync(localFile, "x");
+			const streamManager = { openStream: vi.fn() };
+
+			await expect(droidsock.install.streaming(fakeSocket, streamManager, localFile, { flags })).rejects.toThrow("Invalid flags");
+			expect(streamManager.openStream).not.toHaveBeenCalled();
+		}
+	);
+
 	test("chunks stdin larger than the 64KB write chunk into multiple stream.write() calls", async () => {
 		const localFile = path.join(tmpDir, "big.apk");
 		const big = Buffer.alloc(64 * 1024 + 10, 0x42);

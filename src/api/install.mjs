@@ -26,6 +26,23 @@ import { open } from "node:fs/promises";
 const EXEC_WRITE_CHUNK = 64 * 1024;
 
 /**
+ * Validates flags before they're joined and interpolated into the
+ * `exec:cmd package install ...` destination string. A non-array throws a
+ * confusing TypeError from .join() with no context; a flag containing
+ * whitespace would silently split into multiple argv tokens once joined and
+ * re-parsed by the device shell, changing what's actually passed to `pm
+ * install` from what the caller specified.
+ * @param {*} flags - Value to validate.
+ * @returns {Array<string>} The validated flags, unchanged.
+ */
+function assertValidFlags(flags) {
+	if (!Array.isArray(flags) || !flags.every((flag) => typeof flag === "string" && flag.length > 0 && !/\s/.test(flag))) {
+		throw new Error(`Invalid flags: ${JSON.stringify(flags)} (must be an array of non-empty, whitespace-free strings)`);
+	}
+	return flags;
+}
+
+/**
  * Installs a local APK using the classic push-then-install flow: pushes the
  * file to a device temp directory via the existing SYNC-based push, runs
  * `pm install` against it, then removes the pushed temp file regardless of
@@ -91,6 +108,7 @@ export async function classic(socket, streamManager, localPath, options = {}) {
  */
 export async function streaming(___socket, streamManager, localPath, options = {}) {
 	const { flags = [], onProgress } = options;
+	assertValidFlags(flags);
 	const fileHandle = await open(localPath, "r");
 	try {
 		const { size: totalBytes } = await fileHandle.stat();
