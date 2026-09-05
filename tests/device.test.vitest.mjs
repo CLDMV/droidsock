@@ -287,6 +287,24 @@ describe("device.connect() - reuse and reconnect", () => {
 		expect(reconnected).toBe(device);
 		expect(reconnected.isConnected()).toBe(true);
 	});
+
+	test("options passed while already connected are still remembered for a LATER reconnect, not silently discarded", async () => {
+		const { device, droidsock: instance } = await connectDevice();
+		const secondKeyDir = mkdtempSync(path.join(tmpdir(), "droidsock-device-test-2-"));
+		try {
+			// Already connected - connect() short-circuits without opening a new
+			// session, but the new keyDir must still be remembered for later.
+			const stillSame = await instance.device.connect("127.0.0.1", fakeServer.port, { keyDir: secondKeyDir });
+			expect(stillSame).toBe(device);
+
+			instance.device.disconnect("127.0.0.1", fakeServer.port);
+			const getKeysSpy = vi.spyOn(instance.auth, "getKeys");
+			await instance.device.connect("127.0.0.1", fakeServer.port);
+			expect(getKeysSpy).toHaveBeenCalledWith(secondKeyDir);
+		} finally {
+			rmSync(secondKeyDir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("device.disconnect(host, port) - single-target disconnect", () => {

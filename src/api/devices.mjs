@@ -90,8 +90,15 @@ export function disconnect() {
 	if (arguments.length > 0) {
 		throw new Error("devices.disconnect() takes no arguments - it disconnects ALL devices. Use device.disconnect(host, port) for one.");
 	}
+	// Only count (and call disconnect() on) entries that are actually
+	// connected - deviceEntries() returns every known device regardless of
+	// state, and disconnect() is a no-op for one that's already
+	// disconnected, so counting all of them would make two consecutive
+	// calls report the same "number disconnected" even though the second
+	// call disconnected nothing.
 	let count = 0;
 	for (const entry of deviceEntries()) {
+		if (!entry.isConnected()) continue;
 		entry.disconnect();
 		count++;
 	}

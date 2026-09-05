@@ -139,6 +139,12 @@ describe("devices.disconnect() - collection-wide, zero-arg only, synchronous", (
 		}
 	});
 
+	test("reports the real count - a second call after nothing changed returns 0, not the same number again", async () => {
+		const { droidsock: instance } = await connectDevice();
+		expect(instance.devices.disconnect()).toBe(1);
+		expect(instance.devices.disconnect()).toBe(0);
+	});
+
 	test("throws synchronously on any argument rather than silently disconnecting everything - the mix-up with device.disconnect(host, port) it exists to catch", async () => {
 		droidsock = await createDroidSock();
 		expect(() => droidsock.devices.disconnect("127.0.0.1", 5555)).toThrow(

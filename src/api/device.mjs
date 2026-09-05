@@ -163,8 +163,14 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 			// through the mounted reference, and returning `leaf` directly
 			// here would silently hand back a second, divergent "device"
 			// object with none of that reference's mirrored state.
-			if (leaf.isConnected()) return self.devices[deviceKey];
+			// Merge/remember the new options BEFORE the already-connected
+			// short-circuit below - otherwise options passed while already
+			// connected would be silently discarded instead of taking effect
+			// on the NEXT reconnect, contradicting this function's own "falls
+			// back to what this leaf was created (or last reconnected) with"
+			// contract.
 			leaf.options = { ...leaf.options, ...reconnectOptions };
+			if (leaf.isConnected()) return self.devices[deviceKey];
 			const { connection, streamManager } = await openSession(host, port, leaf.options);
 			session.connection = connection;
 			session.streamManager = streamManager;
