@@ -57,7 +57,6 @@ export function create(socket) {
 	const manager = {
 		socket,
 		streams,
-		nextStreamId,
 
 		// Device-initiated streams (e.g. a `reverse:forward:` tunnel's inbound
 		// connections) aren't a response to anything droidsock opened, so
