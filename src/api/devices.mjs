@@ -90,7 +90,10 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, connection, streamMana
 		// api.devices.<key> entry behind.
 		disconnect: async () => {
 			if (connection) connection.disconnect();
-			await self.slothlet.api.remove(`devices.${deviceKey}`);
+			// Best-effort, like connect()'s own stale-entry removal - an already-
+			// removed entry (e.g. a repeated disconnect() call) would otherwise
+			// throw here and mask that the socket was already torn down above.
+			await self.slothlet.api.remove(`devices.${deviceKey}`).catch(() => {});
 		},
 
 		shell: async (command, shellOptions = {}) => {

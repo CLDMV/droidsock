@@ -266,3 +266,35 @@ describe("devices leaf convenience shell shortcuts - quote user-controlled argum
 		}
 	});
 });
+
+describe("devices leaf disconnect() - tolerates a failed api leaf removal, like connect()'s own stale-entry removal", () => {
+	let fakeServer;
+	let keyDir;
+
+	afterEach(async () => {
+		if (fakeServer) {
+			await new Promise((resolve) => fakeServer.server.close(resolve));
+			fakeServer = null;
+		}
+		if (keyDir) rmSync(keyDir, { recursive: true, force: true });
+	});
+
+	test("still resolves when self.slothlet.api.remove() rejects (e.g. the entry is already gone)", async () => {
+		fakeServer = await createFakeAdbServer();
+		keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-connection-test-"));
+
+		const droidsock = await createDroidSock();
+		try {
+			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+
+			vi.spyOn(droidsock.slothlet.api, "remove").mockRejectedValueOnce(new Error("devices.<key> not found"));
+
+			// Previously an unguarded await on api.remove() would propagate this
+			// rejection, masking that the underlying socket had already been torn
+			// down successfully by connection.disconnect() just before it.
+			await expect(device.disconnect()).resolves.toBeUndefined();
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+});
