@@ -75,7 +75,14 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, connection, streamMana
 		port,
 		deviceId,
 
-		isConnected: () => Boolean(connection && connection.connected),
+		// connection.connected is only ever set false by disconnect() -
+		// nothing updates it if the underlying TCP socket dies unexpectedly
+		// (device unplugged, network drop), so it can go stale and keep
+		// reporting connected. socket.destroyed is live, authoritative state
+		// regardless of why the socket went away, so check it directly rather
+		// than trusting the flag alone - connect()'s reuse-vs-reconnect
+		// decision depends entirely on this being accurate.
+		isConnected: () => Boolean(connection && connection.connected && connection.socket && !connection.socket.destroyed),
 
 		// Closing the socket and detaching this leaf from the tree are both
 		// this method's job - a device that's gone shouldn't leave a stale

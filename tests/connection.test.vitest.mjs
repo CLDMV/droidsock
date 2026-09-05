@@ -11,7 +11,7 @@
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
-import { describe, test, expect, afterEach } from "vitest";
+import { describe, test, expect, afterEach, vi } from "vitest";
 import net from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -116,6 +116,44 @@ describe("connection.create - outgoing CNXN feature advertisement (see #8)", () 
 			}
 
 			await device.disconnect();
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+});
+
+describe("devices leaf isConnected() - reflects unexpected socket teardown, not just disconnect()", () => {
+	let fakeServer;
+	let keyDir;
+
+	afterEach(async () => {
+		if (fakeServer) {
+			await new Promise((resolve) => fakeServer.server.close(resolve));
+			fakeServer = null;
+		}
+		if (keyDir) rmSync(keyDir, { recursive: true, force: true });
+	});
+
+	test("flips to false when the underlying TCP socket is destroyed by a real RST, with no disconnect() call", async () => {
+		fakeServer = await createFakeAdbServer();
+		keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-connection-test-"));
+
+		let acceptedSocket;
+		fakeServer.server.on("connection", (socket) => {
+			acceptedSocket = socket;
+		});
+
+		const droidsock = await createDroidSock();
+		try {
+			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			expect(device.isConnected()).toBe(true);
+
+			// connection.connected is only ever set false by disconnect() - a
+			// real TCP RST (not a graceful end, and never disconnect()) leaves
+			// it stuck at true unless isConnected() also consults the socket's
+			// own (always-accurate) destroyed state.
+			acceptedSocket.resetAndDestroy();
+			await vi.waitUntil(() => device.isConnected() === false);
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}

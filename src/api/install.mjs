@@ -154,7 +154,24 @@ export async function streaming(___socket, streamManager, localPath, options = {
 				if (onProgress) onProgress({ bytesTransferred, totalBytes });
 			}
 
+			// A rejection here (from the stream's "error" listener) surfaces the
+			// real underlying error and takes priority over the check below.
 			await closed;
+
+			// AdbStream only ever emits "close", never "error", for a normal
+			// CLSE - so a device disconnecting before consuming the full APK
+			// resolves `closed` cleanly with no distinguishing error, even
+			// though the install never actually completed. Compare against
+			// totalBytes (not "did the loop reach a zero-byte read") since the
+			// stream can legitimately close right after the last chunk is
+			// written, before the loop gets another read to confirm EOF - that
+			// case already sent everything and must not be flagged as
+			// incomplete. Without this check at all, callers (and
+			// devices.install()'s classic-path fallback) would treat a
+			// genuinely partial transfer as a successful install.
+			if (bytesTransferred < totalBytes) {
+				throw new Error(`Exec stream closed before the full APK was sent (${bytesTransferred} of ${totalBytes} bytes transferred)`);
+			}
 			return Buffer.concat(outputChunks).toString("utf8");
 		} finally {
 			stream.close();
