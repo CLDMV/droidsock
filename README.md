@@ -15,7 +15,7 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 >
 > - **Shell + streaming**: Stable - command execution, interactive shells, and log/process streaming all work over the real ADB protocol.
 > - **File transfer**: `mkdir` / `remove` / `move` / `copy` / `chmod` / `diskUsage` / `find` / `stat` work today via shell commands. `list` prefers a binary-safe SYNC-based implementation with automatic shell fallback.
-> - **Experimental**: `push` / `pull` / `listSync` (real ADB SYNC sub-protocol usage), `device.reboot()`, `device.forward()`, `device.install()`, and `pairing.pair()` (Wi-Fi pairing) are all implemented - built from the ADB protocol spec and covered by unit tests (several exercised against real loopback TCP/TLS servers, not purely mocks) - but **none of them have been run against a real device yet**. See [#1](https://github.com/CLDMV/droidsock/issues/1). Forwarding is host → device only; install is push-then-install only - see the [v1.1.0 changelog](./docs/changelog/v1/v1.1.0.md) for what's tracked separately.
+> - **Experimental**: `push` / `pull` / `listSync` (real ADB SYNC sub-protocol usage), `device.reboot()`, `device.forward()` / `device.reverse()`, `device.install()`, and `pairing.pair()` (Wi-Fi pairing) are all implemented - built from the ADB protocol spec and covered by unit tests (several exercised against real loopback TCP/TLS servers, not purely mocks) - but **none of them have been run against a real device yet**. See [#1](https://github.com/CLDMV/droidsock/issues/1). Install is push-then-install only - see the [v1.1.0 changelog](./docs/changelog/v1/v1.1.0.md) for what's tracked separately.
 
 ---
 
@@ -49,7 +49,7 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 - ✅ **Shell Commands**: Execute commands, stream output, interactive sessions
 - ✅ **File Operations**: Shell-based `mkdir` / `remove` / `move` / `copy` / `chmod` / `diskUsage` / `find`, plus binary-safe SYNC-based `list`, and experimental `push` / `pull`
 - ✅ **Reboot** (experimental): Real `reboot:` service, including bootloader/recovery/sideload modes
-- ✅ **Port Forwarding** (experimental): `adb forward`-equivalent TCP tunneling (host → device)
+- ✅ **Port Forwarding** (experimental): `adb forward`/`adb reverse`-equivalent TCP tunneling, both directions
 - ✅ **APK Install** (experimental): `adb install`-equivalent local APK installation
 - ✅ **Wi-Fi Pairing** (experimental): `adb pair`-equivalent PIN-based pairing (SPAKE2-over-Ed25519 + TLS 1.3) for Android 11+ wireless debugging
 - ✅ **Device Discovery**: Support for multiple devices via configuration
@@ -115,7 +115,7 @@ Use the `references/devices.json` file to configure your devices:
 
 `droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` returns a device object exposing connection state, shell execution/streaming, file operations (`push` / `pull` / `list` / `stat`), reboot, port forwarding, and APK install.
 
-📚 **See [docs/API.md](./docs/API.md) for the full method reference**, including every option and the experimental/scope caveats on `push` / `pull` / `list` / `forward` / `install`.
+📚 **See [docs/API.md](./docs/API.md) for the full method reference**, including every option and the experimental/scope caveats on `push` / `pull` / `list` / `forward` / `reverse` / `install`.
 
 ## Examples
 
@@ -153,10 +153,11 @@ node examples/streaming-example.mjs files
 5. **Files Layer** (`src/api/files.mjs`): Shell-based file operations, a binary-safe SYNC `LIST` implementation with automatic shell fallback, and an experimental ADB SYNC sub-protocol implementation for real binary transfer (`push` / `pull`) - not yet validated against a real device
 6. **Reboot Layer** (`src/api/reboot.mjs`): Real ADB `reboot:` service
 7. **Forward Layer** (`src/api/forward.mjs`): TCP port forwarding (host → device) via the `tcp:` service
-8. **Install Layer** (`src/api/install.mjs`): Local APK install, composed from the Files and Shell layers
-9. **Pairing Layer** (`src/api/pairing.mjs`): Wi-Fi pairing (`adb pair` equivalent) - a separate TLS 1.3 + SPAKE2 protocol reusing the Authentication layer's persistent RSA identity, not composed with any of the layers above
-10. **Device Layer** (`src/api/device.mjs`): High-level per-device API composing the layers above
-11. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
+8. **Reverse Layer** (`src/api/reverse.mjs`): TCP port forwarding (device → host) via `reverse:forward:`/`reverse:killforward:` and the Stream layer's device-initiated stream handling
+9. **Install Layer** (`src/api/install.mjs`): Local APK install, composed from the Files and Shell layers
+10. **Pairing Layer** (`src/api/pairing.mjs`): Wi-Fi pairing (`adb pair` equivalent) - a separate TLS 1.3 + SPAKE2 protocol reusing the Authentication layer's persistent RSA identity, not composed with any of the layers above
+11. **Device Layer** (`src/api/device.mjs`): High-level per-device API composing the layers above
+12. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
 
 📚 **See [docs/PROTOCOL.md](./docs/PROTOCOL.md) for wire-level protocol details** (packet structure, auth flow, SYNC sub-protocol framing, reboot/forward service usage).
 

@@ -175,6 +175,17 @@ export async function connect(host, port = 5555, options = {}) {
 			return await self.forward.start(connection.socket, streamManager, devicePort, forwardOptions);
 		},
 
+		// Reverse port forwarding (adb reverse equivalent) - see also self.reverse
+		reverse: async (devicePort, hostPort, reverseOptions = {}) => {
+			if (!device.isConnected()) {
+				throw new Error("Device not connected");
+			}
+			if (!connection.authorized) {
+				throw new Error("Device not authorized. Please accept authorization dialog.");
+			}
+			return await self.reverse.start(connection.socket, streamManager, devicePort, hostPort, reverseOptions);
+		},
+
 		// Local APK install (adb install equivalent) - currently the classic
 		// push-then-install flow; will try a streaming install first once that's
 		// implemented, falling back to this for devices that don't support it.

@@ -30,6 +30,7 @@ describe("index.mjs default export", () => {
 				"log",
 				"pairing",
 				"reboot",
+				"reverse",
 				"shell",
 				"stream",
 				"utils"
@@ -78,6 +79,15 @@ describe("index.mjs default export", () => {
 		const droidsock = await createDroidSock();
 		try {
 			expect(typeof droidsock.forward.start).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("reverse module exposes start", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.reverse.start).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
