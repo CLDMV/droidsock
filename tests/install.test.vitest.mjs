@@ -57,8 +57,11 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	vi.restoreAllMocks();
-	rmSync(tmpDir, { recursive: true, force: true });
-	if (droidsock.shutdown) await droidsock.shutdown();
+	// Guarded - if beforeEach() threw before tmpDir was assigned (e.g.
+	// createDroidSock() itself failed), an unguarded rmSync(undefined, ...)
+	// would throw its own TypeError here and mask the real failure.
+	if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+	if (droidsock?.shutdown) await droidsock.shutdown();
 });
 
 describe("install.classic", () => {
@@ -205,5 +208,23 @@ describe("install.streaming (EXPERIMENTAL - exec:cmd package install, not yet va
 
 		await expect(droidsock.install.streaming(fakeSocket, streamManager, localFile)).rejects.toThrow("device disconnected");
 		expect(stream.close).toHaveBeenCalled();
+	});
+
+	test("stops the write loop (without throwing) when the stream closes normally mid-transfer, not just on error", async () => {
+		const localFile = path.join(tmpDir, "big.apk");
+		// 2 chunks - if the loop kept writing after the first chunk's close,
+		// there would be a second stream.write() call to catch.
+		const big = Buffer.alloc(64 * 1024 + 10, 0x42);
+		writeFileSync(localFile, big);
+
+		// The device ends the exec stream normally (no error) before the full
+		// APK was sent - `closed` only ever REJECTS on "error", so this
+		// previously left `stopped` false and let the loop attempt another
+		// write against the already-closed stream.
+		const stream = createFakeExecStream((___chunk, s) => s.emit("close"));
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.install.streaming(fakeSocket, streamManager, localFile)).resolves.toBe("");
+		expect(stream.writes).toHaveLength(1);
 	});
 });

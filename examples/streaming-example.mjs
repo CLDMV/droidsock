@@ -56,12 +56,18 @@ async function logcatExample() {
 	}
 
 	// Clean up
-	setTimeout(async () => {
-		console.log("\n✅ Disconnecting...");
-		await deviceConnection.disconnect();
-		if (api.shutdown) {
-			await api.shutdown();
-		}
+	setTimeout(() => {
+		// setTimeout doesn't observe a callback's returned promise, so an async
+		// callback used directly here would turn a disconnect()/shutdown()
+		// rejection into an unhandled rejection - wrap it in an IIFE with an
+		// explicit catch instead.
+		(async () => {
+			console.log("\n✅ Disconnecting...");
+			await deviceConnection.disconnect();
+			if (api.shutdown) {
+				await api.shutdown();
+			}
+		})().catch((error) => console.error("❌ Cleanup error:", error.message));
 	}, 2000);
 }
 
@@ -98,12 +104,16 @@ async function topExample() {
 	}
 
 	// Clean up
-	setTimeout(async () => {
-		console.log("\n✅ Disconnecting...");
-		await deviceConnection.disconnect();
-		if (api.shutdown) {
-			await api.shutdown();
-		}
+	setTimeout(() => {
+		// See logcatExample()'s identical cleanup above for why this is an IIFE
+		// with an explicit catch rather than an async setTimeout callback.
+		(async () => {
+			console.log("\n✅ Disconnecting...");
+			await deviceConnection.disconnect();
+			if (api.shutdown) {
+				await api.shutdown();
+			}
+		})().catch((error) => console.error("❌ Cleanup error:", error.message));
 	}, 1000);
 }
 

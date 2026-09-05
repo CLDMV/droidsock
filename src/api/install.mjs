@@ -100,23 +100,33 @@ export async function streaming(___socket, streamManager, localPath, options = {
 		const stream = await streamManager.openStream(destination);
 		try {
 			let output = Buffer.alloc(0);
+			// Set synchronously inside the "close"/"error" listeners themselves
+			// (not via a .then()/.catch() reaction on `closed`) - a device can
+			// close the stream normally mid-transfer, not just error it, and
+			// `closed` only ever REJECTS (on "error"), never on a plain "close".
+			// A promise reaction would also add a microtask hop of delay; setting
+			// the flag directly in the listener closes the race window as soon
+			// as the event fires, with no indirection.
 			let stopped = false;
 			const closed = new Promise((resolve, reject) => {
 				stream.on("data", (chunk) => {
 					output = Buffer.concat([output, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
 				});
-				stream.once("close", resolve);
-				stream.once("error", reject);
+				stream.once("close", () => {
+					stopped = true;
+					resolve();
+				});
+				stream.once("error", (error) => {
+					stopped = true;
+					reject(error);
+				});
 			});
 			// Reading from disk and writing to the stream both cross real async
 			// boundaries, unlike a synchronous loop over an already-buffered file -
-			// this attaches a handler immediately (so a mid-transfer stream error
+			// this attaches a handler immediately so a mid-transfer stream error
 			// can't surface as an unhandled rejection in the gap before the loop
-			// reaches `await closed` below) and stops the loop promptly instead of
-			// continuing to read/write after the stream has already died.
-			closed.catch(() => {
-				stopped = true;
-			});
+			// reaches `await closed` below (the flag itself is set above, not here).
+			closed.catch(() => {});
 
 			let bytesTransferred = 0;
 			while (!stopped) {
