@@ -18,13 +18,14 @@
 import { self } from "@cldmv/slothlet/runtime";
 import net from "node:net";
 import dgram from "node:dgram";
-import { isValidIP, isValidPort } from "./utils.mjs";
+import { isValidPort, ipv6ToBigInt, bigIntToIpv6 } from "./utils.mjs";
 
 // DNS record types/classes used by the mDNS query/response this module builds
 // and parses. Only the handful mDNS device discovery actually needs.
 const DNS_TYPE_A = 1;
 const DNS_TYPE_PTR = 12;
 const DNS_TYPE_TXT = 16;
+const DNS_TYPE_AAAA = 28;
 const DNS_TYPE_SRV = 33;
 const DNS_CLASS_IN = 1;
 
@@ -33,33 +34,41 @@ const DNS_CLASS_IN = 1;
 // ---------------------------------------------------------------------------
 
 /**
- * Converts a dotted IPv4 string to its 32-bit unsigned integer form.
+ * Converts a dotted IPv4 string to its 32-bit form.
  * @param {string} ip - Dotted IPv4 address.
- * @returns {number} 32-bit unsigned integer representation.
+ * @returns {bigint} 32-bit unsigned value.
  */
-function ipToInt(ip) {
-	const parts = ip.split(".").map(Number);
-	return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+function ipv4ToBigInt(ip) {
+	return ip.split(".").reduce((acc, octet) => (acc << 8n) | BigInt(octet), 0n);
 }
 
 /**
- * Converts a 32-bit unsigned integer back to a dotted IPv4 string.
- * @param {number} int - 32-bit unsigned integer representation.
+ * Converts a 32-bit BigInt back to a dotted IPv4 string.
+ * @param {bigint} value - 0..2**32-1.
  * @returns {string} Dotted IPv4 address.
  */
-function intToIp(int) {
-	return [24, 16, 8, 0].map((shift) => (int >>> shift) & 0xff).join(".");
+function bigIntToIpv4(value) {
+	return [24n, 16n, 8n, 0n].map((shift) => Number((value >> shift) & 0xffn)).join(".");
 }
 
 /**
- * Parses a CIDR block into its sweepable host range. Network/broadcast
- * addresses are excluded for prefixes /1-/30; a /31 (point-to-point, RFC
- * 3021) sweeps both addresses, and a /32 sweeps the single address. /0 is
- * accepted per standard CIDR semantics (rejecting it would just be an
- * inaccurate error message) but is always astronomically larger than any
- * sane `maxHosts`, so `subnet()`'s guard rejects it before any sweeping.
- * @param {string} cidr - CIDR block, e.g. "192.168.1.0/24".
- * @returns {{firstHostInt: number, lastHostInt: number, sweepCount: number}} The sweepable range.
+ * Parses a CIDR block (IPv4 or IPv6) into its sweepable host range. Family is
+ * detected from the address via `net.isIP()`, which also validates it (so
+ * IPv6 zone ids, malformed octets, etc. are rejected here rather than by a
+ * hand-rolled check). IPv4 excludes the network/broadcast address for
+ * prefixes /1-/30; a /31 (point-to-point, RFC 3021) sweeps both, /32 sweeps
+ * one, and /0 is accepted (rejecting it would just be an inaccurate error
+ * message) but always astronomically larger than any sane `maxHosts`.
+ *
+ * IPv6 has no broadcast concept (RFC 4291) - the all-zeros host is the
+ * legitimate subnet-router anycast address, not a reserved non-host address
+ * - so an IPv6 prefix sweeps its FULL range with no exclusion: /128 -> 1,
+ * /127 -> 2, /126 -> 4. A `/64` (the conventional IPv6 subnet size) has
+ * 2**64 hosts, which the existing `maxHosts` guard rejects exactly like an
+ * oversized IPv4 CIDR - no special-casing needed to keep an IPv6 sweep
+ * bounded to something sane.
+ * @param {string} cidr - CIDR block, e.g. "192.168.1.0/24" or "2001:db8::/120".
+ * @returns {{family: 4|6, firstHost: bigint, lastHost: bigint, sweepCount: bigint, format: (value: bigint) => string}} The sweepable range.
  */
 function parseCidr(cidr) {
 	// Split into exactly ip + prefix - split("/") silently drops anything past
@@ -67,39 +76,31 @@ function parseCidr(cidr) {
 	// empty prefix ("1.2.3.4/") coerces to 0 via Number("") rather than
 	// failing, both of which a bare length/undefined check lets through.
 	const parts = String(cidr).split("/");
-	if (parts.length !== 2 || !isValidIP(parts[0]) || !/^\d+$/.test(parts[1])) {
+	const family = parts.length === 2 ? net.isIP(parts[0]) : 0;
+	if (family === 0 || !/^\d+$/.test(parts[1])) {
 		throw new Error(`Invalid CIDR: ${cidr}`);
 	}
-	const [ip, prefixStr] = parts;
+	const [address, prefixStr] = parts;
 
+	const addressBits = family === 6 ? 128 : 32;
 	const prefix = Number(prefixStr);
-	if (prefix > 32) {
-		throw new Error(`Invalid CIDR prefix (must be 0-32): ${cidr}`);
+	if (prefix > addressBits) {
+		throw new Error(`Invalid CIDR prefix (must be 0-${addressBits}): ${cidr}`);
 	}
 
-	const base = ipToInt(ip);
-	const hostBits = 32 - prefix;
+	const format = family === 6 ? bigIntToIpv6 : bigIntToIpv4;
+	const base = family === 6 ? ipv6ToBigInt(address) : ipv4ToBigInt(address);
+	const hostBits = BigInt(addressBits - prefix);
+	const size = 1n << hostBits;
+	// Shift-down/shift-up rather than `base & ~(size - 1n)` - same result,
+	// but never has to materialize a negative BigInt mask.
+	const network = (base >> hostBits) << hostBits;
+	const lastAddress = network + size - 1n;
 
-	if (hostBits === 0) {
-		return { firstHostInt: base, lastHostInt: base, sweepCount: 1 };
+	if (family === 6 || hostBits <= 1n) {
+		return { family, firstHost: network, lastHost: lastAddress, sweepCount: size, format };
 	}
-
-	if (hostBits === 32) {
-		// /0 - JS's `<<` treats a shift amount of 32 as 0 (masked mod 32), so
-		// the general mask math below can't represent this case; compute the
-		// whole-IPv4-space range directly instead.
-		return { firstHostInt: 1, lastHostInt: 0xfffffffe, sweepCount: 0xfffffffe };
-	}
-
-	const mask = (~0 << hostBits) >>> 0;
-	const network = (base & mask) >>> 0;
-	const broadcast = (network | (~mask >>> 0)) >>> 0;
-
-	if (hostBits === 1) {
-		return { firstHostInt: network, lastHostInt: broadcast, sweepCount: 2 };
-	}
-
-	return { firstHostInt: network + 1, lastHostInt: broadcast - 1, sweepCount: broadcast - network - 1 };
+	return { family, firstHost: network + 1n, lastHost: lastAddress - 1n, sweepCount: size - 2n, format };
 }
 
 /**
@@ -152,7 +153,12 @@ async function sweepPool(hosts, port, { timeoutMs, concurrency }) {
 			if (i >= hosts.length) return;
 			const host = hosts[i];
 			if (await attemptConnect(host, port, timeoutMs)) {
-				reachable.push({ host, port });
+				// Record the sweep index, not just {host, port}: hosts[] is already
+				// built in ascending address order for both IPv4 and IPv6, so index
+				// order IS address order - sorting on a re-parsed host would need
+				// family-aware BigInt math, and a comparator that returns a BigInt
+				// throws (Array.sort() coerces the result via ToNumber()).
+				reachable.push({ index: i, host, port });
 			}
 		}
 	}
@@ -160,14 +166,22 @@ async function sweepPool(hosts, port, { timeoutMs, concurrency }) {
 	const workers = Array.from({ length: Math.min(concurrency, hosts.length) }, () => worker());
 	await Promise.all(workers);
 
-	return reachable.sort((a, b) => ipToInt(a.host) - ipToInt(b.host));
+	return reachable.sort((a, b) => a.index - b.index).map(({ host, port: p }) => ({ host, port: p }));
 }
 
 /**
  * Discovers classic fixed-port ADB devices by sweeping a CIDR block with raw
  * TCP connect attempts on a configurable port - the `adb devices`-equivalent
- * mechanism for devices that don't advertise over mDNS.
- * @param {string} cidr - CIDR block to sweep, e.g. "192.168.1.0/24".
+ * mechanism for devices that don't advertise over mDNS. Accepts an IPv4 or
+ * IPv6 CIDR (e.g. "192.168.1.0/24" or "2001:db8::/120") - IPv6 sweeps its
+ * full range (no network/broadcast exclusion, see parseCidr), so `maxHosts`
+ * is what keeps a `/64`-or-larger sweep from being attempted at all.
+ *
+ * Note: sweeping a range that includes the IPv4 "any" address (0.0.0.0) or
+ * its IPv6 equivalent (::) will report it reachable whenever ANYTHING on the
+ * local machine listens on the probed port, regardless of the actual remote
+ * network - the same hazard either family has for its own "any" address.
+ * @param {string} cidr - CIDR block to sweep, e.g. "192.168.1.0/24" or "2001:db8::/120".
  * @param {number} [port=5555] - Port to probe on every candidate host.
  * @param {Object} [options={}] - Sweep options.
  * @param {number} [options.timeoutMs=500] - Per-host connect timeout in ms.
@@ -203,8 +217,8 @@ export async function subnet(cidr, port = 5555, options = {}) {
 	}
 
 	const hosts = [];
-	for (let ip = range.firstHostInt; ip <= range.lastHostInt; ip++) {
-		hosts.push(intToIp(ip));
+	for (let value = range.firstHost; value <= range.lastHost; value++) {
+		hosts.push(range.format(value));
 	}
 
 	self.log.debug(`discover.subnet: sweeping ${hosts.length} host(s) in ${cidr} on port ${port}`);
@@ -367,6 +381,16 @@ function readDnsRecord(buffer, offset) {
 		case DNS_TYPE_A:
 			data = Array.from(buffer.subarray(rdataStart, rdataEnd)).join(".");
 			break;
+		case DNS_TYPE_AAAA:
+			// Unlike A (whose byte-join above produces a string for any length,
+			// which the caller then validates), a wrong-length AAAA has no
+			// meaningful string form to format at all - and throwing here would
+			// abort parseDnsMessage() for the WHOLE datagram, discarding every
+			// other valid record alongside it. Emit null instead, which
+			// ingestDnsRecords() already treats the same way it treats a
+			// malformed A record.
+			data = rdlength === 16 ? bigIntToIpv6((buffer.readBigUInt64BE(rdataStart) << 64n) | buffer.readBigUInt64BE(rdataStart + 8)) : null;
+			break;
 		default:
 			data = buffer.subarray(rdataStart, rdataEnd);
 	}
@@ -419,15 +443,43 @@ function buildPtrQuery(serviceType) {
 }
 
 /**
- * Checks whether an IPv4 address falls in the multicast range
- * (224.0.0.0-239.255.255.255, i.e. a first octet of 224-239) - the whole
- * range, not just the well-known mDNS group address.
- * @param {string} address - Dotted IPv4 address.
+ * Checks whether an address (IPv4 or IPv6) falls in its family's multicast
+ * range - 224.0.0.0-239.255.255.255 (first octet 224-239) for IPv4, ff00::/8
+ * (RFC 4291 2.7) for IPv6 - the whole range, not just the well-known mDNS
+ * group address. Must stay total (never throw): called with arbitrary
+ * caller-supplied `options.address` input, including a plain hostname.
+ * @param {string} address - Dotted IPv4 or IPv6 address, optionally with a "%zone" suffix.
  * @returns {boolean} True if `address` is a multicast address.
  */
 function isMulticastAddress(address) {
-	const firstOctet = Number(address.split(".", 1)[0]);
+	// A scoped IPv6 group ("ff02::fb%eth0") is still multicast - strip the
+	// zone before the numeric check, since ipv6ToBigInt() deliberately
+	// rejects a zone id (it has no bit representation).
+	const bare = address.split("%", 1)[0];
+	if (net.isIPv6(bare)) {
+		return ipv6ToBigInt(bare) >> 120n === 0xffn;
+	}
+	const firstOctet = Number(bare.split(".", 1)[0]);
 	return Number.isInteger(firstOctet) && firstOctet >= 224 && firstOctet <= 239;
+}
+
+/**
+ * Ranks a resolved address so a later record can't downgrade an earlier,
+ * better one when both an A and an AAAA arrive for the same hostname (a real
+ * Android wireless-debugging responder routinely advertises both, with the
+ * AAAA often a link-local address). An address in the family this query is
+ * running over beats the other family, and any routable address beats a
+ * link-local one (fe80::/10, 169.254.0.0/16) - which is unusable here
+ * without a zone/scope id this API has no way to carry.
+ * @param {string} address - A resolved IPv4 or IPv6 address.
+ * @param {4|6} queryFamily - The family mdns() is querying over.
+ * @returns {number} 3 (preferred family, routable), 2 (other family, routable), or 1 (link-local).
+ */
+function addressRank(address, queryFamily) {
+	const isSix = net.isIPv6(address);
+	const isLinkLocal = isSix ? /^fe[89ab]/i.test(address) : address.startsWith("169.254.");
+	if (isLinkLocal) return 1;
+	return (isSix ? 6 : 4) === queryFamily ? 3 : 2;
 }
 
 /**
@@ -436,23 +488,34 @@ function isMulticastAddress(address) {
  * arrive before the records it depends on (e.g. an SRV before its target's A
  * record), so entries are updated in place as later records fill them in.
  * `addresses` is owned by the caller and persists across every message in a
- * single mdns() call - an A record and the SRV that needs it commonly arrive
- * in the same message, but a larger/split response can send them in separate
- * messages, and a map rebuilt fresh per-message would never see the earlier
- * one by the time the later message's SRV needs it.
+ * single mdns() call - an A/AAAA record and the SRV that needs it commonly
+ * arrive in the same message, but a larger/split response can send them in
+ * separate messages, and a map rebuilt fresh per-message would never see the
+ * earlier one by the time the later message's SRV needs it.
  * @param {Array<{name: string, type: number, data: *}>} records - Records parsed from one message.
  * @param {Map<string, {name: string, host?: string, port?: number, txt: Object, _target?: string}>} results - Running discovery map, mutated in place.
  * @param {Map<string, string>} addresses - Hostname -> IP cache spanning every message in this discovery call, mutated in place.
+ * @param {4|6} queryFamily - The family mdns() is querying over, used to rank a same-name A vs. AAAA (see addressRank).
  * @returns {void}
  */
-function ingestDnsRecords(records, results, addresses) {
+function ingestDnsRecords(records, results, addresses, queryFamily) {
 	for (const record of records) {
-		// readDnsRecord() joins whatever bytes rdata holds regardless of rdlength,
-		// so a malformed/hostile A record (rdlength != 4) can produce a
-		// wrong-shaped string. Validate before caching - an unvalidated write
-		// here could otherwise silently overwrite a previously-cached valid
-		// address for the same hostname.
-		if (record.type === DNS_TYPE_A && isValidIP(record.data)) addresses.set(record.name, record.data);
+		// readDnsRecord() joins whatever bytes rdata holds regardless of rdlength
+		// for an A record (and yields null for a wrong-length AAAA) - either way
+		// `data` isn't guaranteed to be a valid address string. Validate before
+		// caching: `typeof === "string"` guards the AAAA-null case (net.isIP()
+		// on null/non-string input would be a meaningless comparison, not a
+		// throw, but is still not a real address), and `net.isIP() !== 0` covers
+		// a malformed A the same way isValidIP() used to.
+		if ((record.type !== DNS_TYPE_A && record.type !== DNS_TYPE_AAAA) || typeof record.data !== "string" || net.isIP(record.data) === 0) {
+			continue;
+		}
+		// Don't let a worse address (wrong family, or link-local) overwrite a
+		// better one already cached for this name - see addressRank.
+		const existing = addresses.get(record.name);
+		if (!existing || addressRank(record.data, queryFamily) >= addressRank(existing, queryFamily)) {
+			addresses.set(record.name, record.data);
+		}
 	}
 
 	for (const record of records) {
@@ -505,27 +568,48 @@ function ingestDnsRecords(records, results, addresses) {
  * `_adb-tls-connect._tcp` / `_adb-tls-pairing._tcp` services Android 11+
  * devices advertise. Hand-written on `dgram` per project decision (see
  * issue #5): sends one PTR query, collects responses for `timeoutMs`, and
- * correlates PTR/SRV/TXT/A records sharing a name into device entries.
+ * correlates PTR/SRV/TXT/A/AAAA records sharing a name into device entries.
  *
- * `address`/`port` default to the real mDNS multicast group/port but are
- * overridable so callers (and tests) can target a specific responder
- * directly instead of joining the multicast group.
+ * Dual-stack: an explicit literal `address` infers the family on its own
+ * (the common case needs no `family` at all); an explicit `family` cross-
+ * validates against a literal `address` if both are given. With neither, it
+ * defaults to IPv4 exactly as before (`224.0.0.251`/udp4) - `family: 6` with
+ * no `address` targets the IPv6 mDNS group `ff02::fb`/udp6 instead.
+ * `address`/`port` are always overridable so callers (and tests) can target
+ * a specific responder directly instead of joining the multicast group.
  * @param {Object} [options={}] - Query options.
  * @param {string} [options.serviceType="_adb-tls-connect._tcp.local"] - mDNS service to query.
- * @param {string} [options.address="224.0.0.251"] - Destination address for the query.
+ * @param {string} [options.address] - Destination address for the query. Defaults to the real mDNS group for the resolved family.
+ * @param {4|6} [options.family] - IP family to query over. Inferred from a literal `address` if omitted; defaults to 4.
  * @param {number} [options.port=5353] - Destination port for the query.
  * @param {number} [options.timeoutMs=3000] - How long to collect responses before resolving.
+ * @param {string} [options.multicastInterface] - Interface to join the multicast group on (e.g. an interface address, or "::%eth0" for IPv6) - needed on a multi-homed or interface-less host, where joining/sending without one can fail with ENETUNREACH.
  * @returns {Promise<Array<{name: string, host: string, port: number, txt: Object}>>} Discovered devices with a resolved host and port.
  */
 export async function mdns(options = {}) {
-	const { serviceType = "_adb-tls-connect._tcp.local", address = "224.0.0.251", port = 5353, timeoutMs = 3000 } = options;
+	const { serviceType = "_adb-tls-connect._tcp.local", address, family, port = 5353, timeoutMs = 3000, multicastInterface } = options;
 
+	if (family !== undefined && family !== 4 && family !== 6) {
+		throw new Error(`Invalid family: ${family} (must be 4 or 6)`);
+	}
 	if (!isValidPort(port)) {
 		throw new Error(`Invalid port: ${port}`);
 	}
 	if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
 		throw new Error(`Invalid timeoutMs: ${timeoutMs} (must be a positive integer)`);
 	}
+
+	// A literal address selects the family on its own; a non-literal (a plain
+	// hostname, or nothing) leaves it undetected and falls through to the
+	// IPv4 default below, exactly as before this option existed.
+	const detectedFamily = typeof address === "string" ? net.isIP(address) : 0;
+	if (family !== undefined && detectedFamily !== 0 && detectedFamily !== family) {
+		throw new Error(`Invalid address: ${address} (not an IPv${family} address)`);
+	}
+	const queryFamily = family ?? (detectedFamily === 6 ? 6 : 4);
+	// ff02::fb is the IPv6 mDNS group (RFC 6762 section 3), the peer of
+	// 224.0.0.251 - only used when no explicit address override was given.
+	const target = address ?? (queryFamily === 6 ? "ff02::fb" : "224.0.0.251");
 
 	// Built up front, synchronously, rather than inside the bind callback
 	// below - a throw there (e.g. an oversized serviceType hitting
@@ -536,15 +620,15 @@ export async function mdns(options = {}) {
 	// port/timeoutMs validation above.
 	const query = buildPtrQuery(serviceType);
 
-	// A compliant mDNS responder replies via MULTICAST back to address:port,
+	// A compliant mDNS responder replies via MULTICAST back to target:port,
 	// not to the querier's source port - so receiving real replies requires
 	// binding to that exact port, not an ephemeral one. Direct-unicast targets
 	// (tests, or a caller pointing at a specific responder) reply straight to
 	// whatever port the query came from, so an ephemeral bind is fine - and
 	// avoids a same-host port clash when the target is a loopback responder.
-	const isMulticast = isMulticastAddress(address);
+	const isMulticast = isMulticastAddress(target);
 
-	const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+	const socket = dgram.createSocket({ type: queryFamily === 6 ? "udp6" : "udp4", reuseAddr: true });
 	const results = new Map();
 	const addresses = new Map();
 	let settled = false;
@@ -563,7 +647,7 @@ export async function mdns(options = {}) {
 
 		socket.on("message", (message) => {
 			try {
-				ingestDnsRecords(parseDnsMessage(message), results, addresses);
+				ingestDnsRecords(parseDnsMessage(message), results, addresses, queryFamily);
 			} catch (error) {
 				self.log.debug(`discover.mdns: ignoring unparseable response - ${error.message}`);
 			}
@@ -581,9 +665,14 @@ export async function mdns(options = {}) {
 		socket.bind(isMulticast ? port : 0, () => {
 			if (isMulticast) {
 				try {
-					socket.addMembership(address);
+					// IPv6 mDNS uses the link-local ff02::fb group, so on a
+					// multi-homed or interface-less host the kernel needs to be
+					// told WHICH link - without one, addMembership()/send() can
+					// fail with ENETUNREACH.
+					if (multicastInterface) socket.setMulticastInterface(multicastInterface);
+					socket.addMembership(target, multicastInterface);
 				} catch (error) {
-					self.log.debug(`discover.mdns: couldn't join multicast group ${address} - ${error.message}`);
+					self.log.debug(`discover.mdns: couldn't join multicast group ${target} - ${error.message}`);
 				}
 			}
 
@@ -591,15 +680,16 @@ export async function mdns(options = {}) {
 			// TTL 255, not the platform's regular multicast TTL default (usually
 			// 1) - a querier not sending TTL 255 risks being ignored by strict
 			// responders. Harmless to set even on the direct-unicast test path,
-			// since it only governs multicast-destined packets.
+			// since it only governs multicast-destined packets. Maps to
+			// IPV6_MULTICAST_HOPS on a udp6 socket.
 			try {
 				socket.setMulticastTTL(255);
 			} catch (error) {
 				self.log.debug(`discover.mdns: couldn't set multicast TTL - ${error.message}`);
 			}
 
-			self.log.debug(`discover.mdns: querying ${serviceType} via ${address}:${port}`);
-			socket.send(query, port, address, (error) => {
+			self.log.debug(`discover.mdns: querying ${serviceType} via ${target}:${port}`);
+			socket.send(query, port, target, (error) => {
 				if (error) finish(reject, error);
 			});
 		});
