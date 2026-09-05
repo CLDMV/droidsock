@@ -74,6 +74,7 @@ function buildDentFrame(mode, size, mtime, name) {
  * id+value+payload envelope) matching files.mjs's own parseStatV2Record, for
  * driving the fake sync stream in statV2()/listV2() tests.
  * @param {Object} [fields={}] - Struct field overrides.
+ * @param {string} [fields.id="STA2"] - Leading 4-byte record id (override to simulate a desynced/unexpected reply).
  * @param {number} [fields.error=0] - errno (0 = success).
  * @param {number} [fields.mode=0] - POSIX file mode (including file-type bits).
  * @param {bigint|number} [fields.size=0n] - File size.
@@ -88,6 +89,7 @@ function buildDentFrame(mode, size, mtime, name) {
  * @returns {Buffer} The 72-byte raw struct.
  */
 function buildStatV2Frame({
+	id = "STA2",
 	error = 0,
 	mode = 0,
 	size = 0n,
@@ -101,7 +103,7 @@ function buildStatV2Frame({
 	gid = 0
 } = {}) {
 	const buf = Buffer.alloc(72);
-	buf.write("STA2", 0, 4, "ascii");
+	buf.write(id, 0, 4, "ascii");
 	buf.writeUInt32LE(error, 4);
 	buf.writeBigUInt64LE(BigInt(dev), 8);
 	buf.writeBigUInt64LE(BigInt(ino), 16);
@@ -878,6 +880,23 @@ describe("files.statV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 
 		await expect(droidsock.files.statV2(fakeSocket, streamManager, "/missing")).rejects.toThrow(
 			"SYNC stat_v2 failed for /missing: errno 2"
+		);
+	});
+
+	test("throws instead of silently interpreting a desynced reply whose leading id isn't STA2", async () => {
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "STA2") {
+				// A 72-byte buffer that happens to carry the right shape but a
+				// different record id - e.g. a stale/misrouted reply from another
+				// SYNC command. Without validating the id, this would silently
+				// parse as a (wrong) successful stat result instead of erroring.
+				s.emit("data", buildStatV2Frame({ id: "DNT2", mode: 0o100644, size: 999n }));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.statV2(fakeSocket, streamManager, "/sdcard/file.txt")).rejects.toThrow(
+			"Unexpected SYNC frame during stat_v2: DNT2"
 		);
 	});
 

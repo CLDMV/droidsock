@@ -808,6 +808,9 @@ export async function statV2(___socket, streamManager, remotePath) {
 		await stream.write(buildSyncFrame(SYNC_ID_STAT_V2, Buffer.from(remotePath, "utf8")));
 
 		const record = parseStatV2Record(await raw.readBytes(SYNC_STAT_V2_SIZE));
+		if (record.id !== SYNC_ID_STAT_V2) {
+			throw new Error(`Unexpected SYNC frame during stat_v2: ${record.id}`);
+		}
 		if (record.error !== 0) {
 			throw new Error(`SYNC stat_v2 failed for ${remotePath}: errno ${record.error}`);
 		}
