@@ -57,6 +57,11 @@ function createFakeAdbStream() {
 		pending.forEach((resolve) => resolve(buf));
 	};
 	stream.close = vi.fn(() => {
+		// Idempotent, matching the real AdbStream.close() (stream.mjs) - without
+		// this guard, routing close() through streamManager.closeStream() (which
+		// itself calls stream.close()) from inside a "close" listener re-emits
+		// "close" and re-enters the same listener, recursing forever.
+		if (stream.closed) return;
 		stream.closed = true;
 		stream.emit("close");
 	});
@@ -95,6 +100,17 @@ function createFakeStreamManager() {
 			openedStreams.push(stream);
 			return Promise.resolve(stream);
 		}),
+		// Mirrors stream.mjs's own handling of a device-initiated OPEN: the real
+		// manager registers the minted stream (streams.set(localId, stream))
+		// BEFORE emitting "remoteOpen" - a fake deviceStream driving a
+		// streamManager.emit("remoteOpen", ...) test must be registered the
+		// same way for closeStream(deviceStream.localId) assertions to mean
+		// anything (otherwise the id is undefined and closeStream() no-ops).
+		registerDeviceStream: (stream) => {
+			stream.localId = nextLocalId++;
+			streamsById.set(stream.localId, stream);
+			return stream;
+		},
 		closeStream: vi.fn((localId) => {
 			const stream = streamsById.get(localId);
 			if (stream) {
@@ -156,6 +172,20 @@ describe("reverse.start", () => {
 		await expect(startPromise).rejects.toThrow("Failed to register reverse tunnel tcp:7000 -> tcp:8000: ");
 	});
 
+	test("rejects with an 'Unexpected response' error (not a silently-masked empty message) when FAIL's length field isn't valid hex", async () => {
+		const streamManager = createFakeStreamManager();
+		const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, 8000);
+
+		await vi.waitUntil(() => streamManager.openedStreams.length > 0);
+		// A malformed length field (not 4 hex digits) - parseInt() would return
+		// NaN here, and a `NaN || 0` fallback previously treated this the same
+		// as a valid zero-length FAIL, masking corrupted/desynced data instead
+		// of surfacing a protocol error.
+		streamManager.openedStreams[0].emit("data", Buffer.from("FAILzzzzsomething"));
+
+		await expect(startPromise).rejects.toThrow(/^Unexpected response to register reverse tunnel tcp:7000 -> tcp:8000: /);
+	});
+
 	test("bridges a device-initiated connection tagged for this mapping's hostPort to a real local TCP target", async () => {
 		let acceptedSocket;
 		const target = net.createServer((socket) => {
@@ -177,7 +207,7 @@ describe("reverse.start", () => {
 			// for that listener attachment ("newListener" fires synchronously the
 			// moment it's registered) before emitting, or the emit is dropped with
 			// no listener yet attached.
-			const deviceStream = createFakeAdbStream();
+			const deviceStream = streamManager.registerDeviceStream(createFakeAdbStream());
 			const localListenerAttached = onceEvent(deviceStream, "newListener");
 			streamManager.emit("remoteOpen", deviceStream, `tcp:${hostPort}`);
 			await localListenerAttached;
@@ -191,6 +221,41 @@ describe("reverse.start", () => {
 			// connection has ended, and nothing else here would end this one.
 			deviceStream.close();
 			await onceEvent(acceptedSocket, "close");
+			// closeStream() (not deviceStream.close() directly) so the manager
+			// also drops its registry entry for the bridged device stream.
+			expect(streamManager.closeStream).toHaveBeenCalledWith(deviceStream.localId);
+		} finally {
+			await new Promise((resolve) => target.close(resolve));
+		}
+	});
+
+	test("closes the device stream via closeStream() when the LOCAL target ends the connection (not just when the device does)", async () => {
+		let acceptedSocket;
+		const target = net.createServer((socket) => {
+			acceptedSocket = socket;
+		});
+		await new Promise((resolve) => target.listen(0, "127.0.0.1", resolve));
+		const hostPort = target.address().port;
+
+		try {
+			const streamManager = createFakeStreamManager();
+			const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, hostPort);
+			await vi.waitUntil(() => streamManager.openedStreams.length > 0);
+			streamManager.openedStreams[0].emit("data", Buffer.from("OKAY"));
+			await startPromise;
+
+			const deviceStream = streamManager.registerDeviceStream(createFakeAdbStream());
+			const localListenerAttached = onceEvent(deviceStream, "newListener");
+			streamManager.emit("remoteOpen", deviceStream, `tcp:${hostPort}`);
+			await localListenerAttached;
+			await vi.waitUntil(() => acceptedSocket !== undefined);
+
+			// The LOCAL target closes its end - reverse.mjs's localSocket "close"
+			// handler is the code path under test here, distinct from the device
+			// itself closing (covered by the bridging test above).
+			acceptedSocket.end();
+			await vi.waitUntil(() => streamManager.closeStream.mock.calls.some(([id]) => id === deviceStream.localId));
+			expect(streamManager.closeStream).toHaveBeenCalledWith(deviceStream.localId);
 		} finally {
 			await new Promise((resolve) => target.close(resolve));
 		}

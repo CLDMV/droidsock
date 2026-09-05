@@ -31,11 +31,16 @@ function assertOkayAck(ack, action) {
 	const id = ack.toString("ascii", 0, 4);
 	if (id === "OKAY") return;
 	if (id === "FAIL") {
-		// The 4-hex-digit length must be honored, not assumed - a valid
-		// zero-length FAIL0000 (no message) previously fell through a
-		// `text.slice(8) || text.slice(4)` fallback (empty string is falsy)
-		// and reported "0000" - the length field itself - as the message.
-		const messageLength = parseInt(ack.toString("ascii", 4, 8), 16) || 0;
+		// The 4-hex-digit length field must itself be validated, not just
+		// parsed optimistically - a malformed field (not valid hex) previously
+		// fell through `parseInt(...) || 0`, since parseInt() returns NaN for
+		// non-hex input and `NaN || 0` silently treats corrupted data as a
+		// valid zero-length message instead of surfacing a protocol error.
+		const lengthField = ack.toString("ascii", 4, 8);
+		if (!/^[0-9a-fA-F]{4}$/.test(lengthField)) {
+			throw new Error(`Unexpected response to ${action}: ${ack.toString("utf8")}`);
+		}
+		const messageLength = parseInt(lengthField, 16);
 		const message = ack.subarray(8, 8 + messageLength).toString("utf8");
 		throw new Error(`Failed to ${action}: ${message}`);
 	}
@@ -84,6 +89,13 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 		// queue device->host bytes until the local socket is actually up.
 		const pendingDeviceData = [];
 
+		// streamManager.closeStream() (not deviceStream.close()) so the stream
+		// manager also drops its registry entry - same pattern as
+		// registerStream/killStream below and reboot.mjs's execute(). Both
+		// closeStream() and AdbStream.close() are idempotent, so it's safe to
+		// call this from more than one teardown path for the same stream.
+		const closeDeviceStream = () => streamManager.closeStream(deviceStream.localId);
+
 		deviceStream.on("data", (data) => {
 			if (localSocketConnected) {
 				localSocket.write(data);
@@ -92,11 +104,12 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 			}
 		});
 		deviceStream.on("close", () => {
+			closeDeviceStream();
 			if (localSocketConnected) localSocket.end();
 			else localSocket.destroy();
 		});
 		deviceStream.on("error", (error) => {
-			deviceStream.close();
+			closeDeviceStream();
 			localSocket.destroy();
 			if (onError) onError(error, deviceStream);
 		});
@@ -104,7 +117,7 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 		localSocket.on("error", (error) => {
 			localSocketFailed = true;
 			localSocket.destroy();
-			deviceStream.close();
+			closeDeviceStream();
 			if (onError) onError(error, deviceStream);
 		});
 
@@ -120,12 +133,12 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 
 			localSocket.on("data", (data) => {
 				deviceStream.write(data).catch((error) => {
-					deviceStream.close();
+					closeDeviceStream();
 					localSocket.destroy();
 					if (onError) onError(error, deviceStream);
 				});
 			});
-			localSocket.on("close", () => deviceStream.close());
+			localSocket.on("close", () => closeDeviceStream());
 		});
 	};
 	streamManager.on("remoteOpen", onRemoteOpen);
