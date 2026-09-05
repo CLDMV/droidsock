@@ -709,7 +709,11 @@ describe("files.pushV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2.bin", { compression: "brotli" });
 
 		const dataFrames = stream.writes.filter((w) => w.subarray(0, 4).toString("ascii") === "DATA");
-		expect(dataFrames).toHaveLength(2);
+		// FileHandle.read() is permitted to return fewer bytes than requested even
+		// before EOF, so more than 2 frames is legitimate - assert chunking
+		// occurred (more than one frame) and each respects the ceiling, rather
+		// than an exact count.
+		expect(dataFrames.length).toBeGreaterThan(1);
 		for (const frame of dataFrames) {
 			expect(frame.subarray(8).length).toBeLessThanOrEqual(64 * 1024);
 		}
@@ -758,9 +762,14 @@ describe("files.pushV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 		await droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest-v2-large.bin", { onProgress });
 
 		const dataFrames = stream.writes.filter((w) => w.subarray(0, 4).toString("ascii") === "DATA");
-		expect(dataFrames).toHaveLength(2);
-		expect(dataFrames[0].subarray(8).length).toBe(64 * 1024);
-		expect(dataFrames[1].subarray(8).length).toBe(1);
+		// FileHandle.read() is permitted to return fewer bytes than requested even
+		// before EOF, so more than 2 frames is legitimate - assert chunking
+		// occurred (more than one frame) and each respects the ceiling, rather
+		// than an exact count/size.
+		expect(dataFrames.length).toBeGreaterThan(1);
+		for (const frame of dataFrames) {
+			expect(frame.subarray(8).length).toBeLessThanOrEqual(64 * 1024);
+		}
 		expect(Buffer.concat(dataFrames.map((f) => f.subarray(8))).equals(big)).toBe(true);
 		expect(onProgress).toHaveBeenLastCalledWith({ bytesTransferred: big.length, totalBytes: big.length });
 	});

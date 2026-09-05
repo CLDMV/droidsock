@@ -183,9 +183,15 @@ describe("install.streaming (EXPERIMENTAL - exec:cmd package install, not yet va
 
 		await droidsock.install.streaming(fakeSocket, streamManager, localFile);
 
-		expect(stream.writes).toHaveLength(2);
-		expect(stream.writes[0].length).toBe(64 * 1024);
-		expect(stream.writes[1].length).toBe(10);
+		// FileHandle.read() is permitted to return fewer bytes than requested even
+		// before EOF, so asserting an exact write count/size would be flaky on
+		// platforms/filesystems where that happens - assert chunking occurred and
+		// each piece respects the ceiling, and that the full content round-trips.
+		expect(stream.writes.length).toBeGreaterThan(1);
+		for (const chunk of stream.writes) {
+			expect(chunk.length).toBeLessThanOrEqual(64 * 1024);
+		}
+		expect(Buffer.concat(stream.writes).equals(big)).toBe(true);
 	});
 
 	test("calls onProgress with cumulative bytes transferred", async () => {
