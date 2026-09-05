@@ -603,14 +603,14 @@ export async function pullV2(___socket, streamManager, remotePath, localPath, op
 		// whole file in JS memory is exactly what V2 exists to avoid.
 		const fileHandle = await open(localPath, "w");
 		try {
-			let totalBytes = 0;
+			let bytesTransferred = 0;
 			for (;;) {
 				const frame = await reader.next();
 				if (frame.id === SYNC_ID_DATA) {
 					const chunk = flag === SYNC_FLAG_BROTLI ? brotliDecompressSync(frame.payload) : frame.payload;
 					await fileHandle.write(chunk);
-					totalBytes += frame.payload.length;
-					if (onProgress) onProgress({ bytesTransferred: totalBytes });
+					bytesTransferred += frame.payload.length;
+					if (onProgress) onProgress({ bytesTransferred });
 				} else if (frame.id === SYNC_ID_DONE) {
 					break;
 				} else if (frame.id === SYNC_ID_FAIL) {

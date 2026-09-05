@@ -137,12 +137,12 @@ export async function streaming(___socket, streamManager, localPath, options = {
 				const buffer = Buffer.alloc(EXEC_WRITE_CHUNK);
 				const { bytesRead } = await fileHandle.read(buffer, 0, EXEC_WRITE_CHUNK, null);
 				if (bytesRead === 0) break;
-				// The stream can die (close/error) while the read above was in
-				// flight - `stopped` is only set via closed.catch(), a microtask
-				// reaction that can land at any point relative to this await, so
-				// re-check right here rather than trusting the `while` condition
-				// checked before the read started. Without this, a write can still
-				// reach an already-dead stream.
+				// `stopped` is set synchronously inside the "close"/"error"
+				// listeners above, but the stream can still die while the read
+				// itself was in flight - re-check right here rather than relying
+				// solely on the `while` condition checked before the read started,
+				// as a belt-and-suspenders guard against writing to an already-dead
+				// stream.
 				if (stopped) break;
 				await stream.write(bytesRead === EXEC_WRITE_CHUNK ? buffer : buffer.subarray(0, bytesRead));
 				bytesTransferred += bytesRead;
