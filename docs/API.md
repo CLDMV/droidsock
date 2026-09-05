@@ -4,19 +4,26 @@
 
 The default export, and the quick path - creates a DroidSock API instance. `options.mode` (`"eager"` or `"lazy"`, default `"eager"`), `options.context`, and `options.config` are all optional. Also available under the explicit name `createDroidSock` (`import { createDroidSock } from "@cldmv/droidsock"`) for callers who prefer it - both names are the exact same function.
 
-## devices.connect(host, port, options)
+## device.connect(host, port, options) / device.disconnect(host, port)
 
-- `host`: Device IP address
-- `port`: ADB port (default: `5555`)
-- `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
+Single-target operations - the module name (singular `device`) disambiguates them from the collection-wide operations on `devices` below.
 
-Connects to a device and returns its live leaf. Calling `connect()` again for the same `host:port` returns the existing connection rather than opening a new one. The returned device is also reachable afterward directly off the api tree - not just via the value `connect()` returned - at `api.devices["<sanitized host_port>"]`, where dots and colons in `host:port` are replaced with underscores (e.g. `10.6.0.108:5555` → `api.devices["10_6_0_108_5555"]`). Every connected device lives there for the life of the connection; there is no separate registry to fall out of sync with the live api.
+- `connect(host, port, options)`:
+  - `host`: Device IP address (IPv4 or IPv6)
+  - `port`: ADB port (default: `5555`)
+  - `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
 
-## devices.list() / devices.disconnect(host, port) / devices.disconnectAll()
+  Connects to a device and returns its live leaf. Calling `connect()` again for the same `host:port` returns the existing connection rather than opening a new one. The returned device is also reachable afterward directly off the api tree - not just via the value `connect()` returned - at `api.devices["<sanitized host_port>"]`, where a `.` in `host:port` becomes a single `_` and a `:` becomes a double `__` (the two would otherwise collide into indistinguishable runs of underscores for an IPv6 host), e.g. `10.6.0.108:5555` → `api.devices["10_6_0_108__5555"]`. Every connected device lives there for the life of the connection; there is no separate registry to fall out of sync with the live api.
+
+- `disconnect(host, port)`: Disconnects a specific device (default port `5555`). Returns `true` if a matching device was found, `false` otherwise. **Async** - `await` it.
+
+## devices.list() / devices.disconnect() / devices.get(idOrLeaf)
+
+Collection-wide operations, mounted alongside every connected device's own leaf at `api.devices.<sanitized host_port>`.
 
 - `list()`: Returns an array of the currently-connected device leaves.
-- `disconnect(host, port)`: Disconnects a specific device (default port `5555`). Returns `true` if a matching device was found, `false` otherwise. **Async** - `await` it.
-- `disconnectAll()`: Disconnects every known device leaf, including stale entries left over from an unexpected disconnect (not just the currently-connected ones `list()` returns). Returns the number disconnected. **Async** - `await` it.
+- `disconnect()`: Takes **no arguments** - disconnects every known device leaf, including stale entries left over from an unexpected disconnect (not just the currently-connected ones `list()` returns). Returns the number disconnected. **Async** - `await` it. Throws if called with any argument, catching a mix-up with the single-target `device.disconnect(host, port)`.
+- `get(idOrLeaf)`: Looks up a connected device leaf by `"host:port"` string (bracket an IPv6 host with a port, e.g. `"[2001:db8::1]:5555"`) or by the leaf object itself (as returned by `connect()`). Returns `undefined` if nothing is currently mounted at that address - the safe way to re-resolve a leaf reference after a prior `disconnect()` left an old reference with none of its composed methods, instead of calling a method on a stale object.
 
 ## The device object (returned by connect())
 
