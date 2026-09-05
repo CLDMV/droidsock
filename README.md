@@ -28,7 +28,7 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 - **`pairing.pair()`** (experimental) - Wi-Fi pairing (SPAKE2-over-Ed25519 + TLS 1.3) for Android 11+ wireless debugging.
 - **Streaming APK install** (experimental) - `device.install()` now tries `exec:cmd`-based streaming install first, falling back to the classic push-then-install flow.
 - **SYNC V2 (64-bit)** - `pushV2` / `pullV2` / `statV2` / `listV2` lift the legacy 32-bit size ceiling, with optional brotli compression.
-- **Hardening** - closed a shell-injection gap in `devices.mjs`'s convenience shortcuts, capped several unbounded device-controlled memory allocations in the SYNC V2 paths, and fixed a handful of mid-transfer disconnect/failure edge cases.
+- **Hardening** - closed a shell-injection gap in `devices.mjs`'s and `shell.mjs`'s convenience shortcuts, capped several unbounded device-controlled memory allocations in the SYNC V2 paths, and fixed a handful of mid-transfer disconnect/failure edge cases.
 - [View full v1.3.0 Changelog](./docs/changelog/v1/v1.3.0.md)
 
 ### Previous: v1.2.0 (September 2026)
