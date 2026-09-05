@@ -17,9 +17,11 @@
 
 import { self } from "@cldmv/slothlet/runtime";
 import { parseListing, quoteShellArg } from "./utils.mjs";
-import { readFile, writeFile, open } from "node:fs/promises";
+import { readFile, writeFile, open, rename, unlink } from "node:fs/promises";
 import { brotliCompress, brotliDecompress } from "node:zlib";
 import { promisify } from "node:util";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 // Promisified rather than the *Sync variants - brotli compression/decompression
 // of a 48-64KB chunk is real CPU work, and running it synchronously on the
@@ -677,40 +679,52 @@ export async function pullV2(___socket, streamManager, remotePath, localPath, op
 		// Write each decompressed chunk straight to disk as it arrives instead
 		// of accumulating an array + Buffer.concat() at the end - for the
 		// large-file transfers that motivate the 64-bit V2 path, buffering the
-		// whole file in JS memory is exactly what V2 exists to avoid.
-		const fileHandle = await open(localPath, "w");
+		// whole file in JS memory is exactly what V2 exists to avoid. Writing
+		// goes to a sibling temp path first, renamed onto localPath only on
+		// success - a mid-transfer failure (FAIL frame, disconnect, decompress
+		// error) would otherwise leave a partial/corrupted file at localPath
+		// itself, unlike pull() (V1), which only writes its output after the
+		// full transfer already succeeded in memory.
+		const tempPath = path.join(path.dirname(localPath), `.${path.basename(localPath)}.${randomUUID()}.part`);
 		try {
-			let bytesTransferred = 0;
-			for (;;) {
-				const frame = await reader.next();
-				if (frame.id === SYNC_ID_DATA) {
-					let chunk = frame.payload;
-					if (flag === SYNC_FLAG_BROTLI) {
-						try {
-							chunk = await brotliDecompressAsync(frame.payload, { maxOutputLength: SYNC_BROTLI_OUTPUT_MAX });
-						} catch (decompressError) {
-							if (decompressError.code === "ERR_BUFFER_TOO_LARGE") {
-								throw new Error(
-									`recv_v2 brotli chunk decompressed past the ${SYNC_BROTLI_OUTPUT_MAX}-byte cap - rejecting as a likely decompression bomb`,
-									{ cause: decompressError }
-								);
+			const fileHandle = await open(tempPath, "w");
+			try {
+				let bytesTransferred = 0;
+				for (;;) {
+					const frame = await reader.next();
+					if (frame.id === SYNC_ID_DATA) {
+						let chunk = frame.payload;
+						if (flag === SYNC_FLAG_BROTLI) {
+							try {
+								chunk = await brotliDecompressAsync(frame.payload, { maxOutputLength: SYNC_BROTLI_OUTPUT_MAX });
+							} catch (decompressError) {
+								if (decompressError.code === "ERR_BUFFER_TOO_LARGE") {
+									throw new Error(
+										`recv_v2 brotli chunk decompressed past the ${SYNC_BROTLI_OUTPUT_MAX}-byte cap - rejecting as a likely decompression bomb`,
+										{ cause: decompressError }
+									);
+								}
+								throw decompressError;
 							}
-							throw decompressError;
 						}
+						await writeFully(fileHandle, chunk);
+						bytesTransferred += frame.payload.length;
+						if (onProgress) onProgress({ bytesTransferred });
+					} else if (frame.id === SYNC_ID_DONE) {
+						break;
+					} else if (frame.id === SYNC_ID_FAIL) {
+						throw new Error(`SYNC recv_v2 failed: ${frame.payload.toString("utf8")}`);
+					} else {
+						throw new Error(`Unexpected SYNC frame during recv_v2: ${frame.id}`);
 					}
-					await writeFully(fileHandle, chunk);
-					bytesTransferred += frame.payload.length;
-					if (onProgress) onProgress({ bytesTransferred });
-				} else if (frame.id === SYNC_ID_DONE) {
-					break;
-				} else if (frame.id === SYNC_ID_FAIL) {
-					throw new Error(`SYNC recv_v2 failed: ${frame.payload.toString("utf8")}`);
-				} else {
-					throw new Error(`Unexpected SYNC frame during recv_v2: ${frame.id}`);
 				}
+			} finally {
+				await fileHandle.close();
 			}
-		} finally {
-			await fileHandle.close();
+			await rename(tempPath, localPath);
+		} catch (error) {
+			await unlink(tempPath).catch(() => {});
+			throw error;
 		}
 	} finally {
 		await quitSyncStream(stream);

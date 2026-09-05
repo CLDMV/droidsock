@@ -15,7 +15,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import createDroidSock from "../index.mjs";
@@ -917,6 +917,31 @@ describe("files.pullV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 		await expect(
 			droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile, { compression: "brotli" })
 		).rejects.toThrow(/decompressed past the \d+-byte cap - rejecting as a likely decompression bomb/);
+	});
+
+	test("leaves no file at all - partial or otherwise - at localPath when the transfer fails mid-stream", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-partial.bin");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				// Some data arrives - proving a partial write really did happen
+				// on disk - before the device reports failure.
+				s.emit("data", buildFrame("DATA", Buffer.from("partial content", "utf8")));
+				s.emit("data", buildFrame("FAIL", Buffer.from("device storage error", "utf8")));
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile)).rejects.toThrow(
+			"SYNC recv_v2 failed: device storage error"
+		);
+
+		// Unlike a mid-stream failure writing straight to localPath (which would
+		// leave a corrupted partial file there), the failed transfer wrote only
+		// to a sibling temp file, cleaned up on failure - so localPath was never
+		// created, and the temp dir has nothing left behind either.
+		expect(existsSync(localFile)).toBe(false);
+		expect(readdirSync(tmpDir)).toEqual([]);
 	});
 });
 
