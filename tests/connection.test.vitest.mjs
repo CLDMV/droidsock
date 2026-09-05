@@ -219,3 +219,50 @@ describe("devices leaf install() - streaming-then-classic fallback error handlin
 		}
 	});
 });
+
+describe("devices leaf convenience shell shortcuts - quote user-controlled arguments before shelling out", () => {
+	let fakeServer;
+	let keyDir;
+
+	afterEach(async () => {
+		if (fakeServer) {
+			await new Promise((resolve) => fakeServer.server.close(resolve));
+			fakeServer = null;
+		}
+		if (keyDir) rmSync(keyDir, { recursive: true, force: true });
+	});
+
+	test("ls(), getprop(), screenshot(), keypress(), and launchApp() single-quote their arguments instead of interpolating unsafely", async () => {
+		fakeServer = await createFakeAdbServer();
+		keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-connection-test-"));
+
+		const droidsock = await createDroidSock();
+		try {
+			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			const executeSpy = vi.spyOn(droidsock.shell, "execute").mockResolvedValue("");
+
+			// Metacharacters and an embedded quote - single-quoting must neutralize
+			// all of them (only the quote delimiter itself needs escaping).
+			await device.ls("/sdcard/it's a test`$(touch /tmp/pwned)`");
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("ls -la '/sdcard/it'\\''s a test`$(touch /tmp/pwned)`'");
+
+			await device.getprop("a; touch /tmp/pwned");
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("getprop 'a; touch /tmp/pwned'");
+
+			await device.screenshot("/sdcard/$(touch /tmp/pwned).png");
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("screencap -p '/sdcard/$(touch /tmp/pwned).png'");
+
+			await device.keypress("4; touch /tmp/pwned");
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("input keyevent '4; touch /tmp/pwned'");
+
+			// package/activity must reach the device as one "/"-joined argument -
+			// quoted as a single unit, not as two separately-quoted tokens.
+			await device.launchApp("com.example.app`x`", "Main;Activity");
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("am start -n 'com.example.app`x`/Main;Activity'");
+
+			await device.disconnect();
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+});

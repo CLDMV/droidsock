@@ -33,6 +33,7 @@
  */
 
 import { self } from "@cldmv/slothlet/runtime";
+import { quoteShellArg } from "./utils.mjs";
 
 /**
  * Sanitizes a `host:port` device id into a slothlet-safe api-path segment.
@@ -202,19 +203,22 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, connection, streamMana
 		},
 
 		// Convenience shell shortcuts
-		ls: (path = ".") => leaf.shell(`ls -la "${path}"`),
+		ls: (path = ".") => leaf.shell(`ls -la ${quoteShellArg(path)}`),
 		pwd: () => leaf.shell("pwd"),
-		getprop: (prop = null) => leaf.shell(prop ? `getprop "${prop}"` : "getprop"),
+		getprop: (prop = null) => leaf.shell(prop ? `getprop ${quoteShellArg(prop)}` : "getprop"),
 		getModel: () => leaf.shell("getprop ro.product.model"),
 		getAndroidVersion: () => leaf.shell("getprop ro.build.version.release"),
 		getBattery: () => leaf.shell("dumpsys battery"),
-		screenshot: (filename = "/sdcard/screenshot.png") => leaf.shell(`screencap -p "${filename}"`),
+		screenshot: (filename = "/sdcard/screenshot.png") => leaf.shell(`screencap -p ${quoteShellArg(filename)}`),
 		logcat: (logOptions = {}) => leaf.startStreamingShell("logcat", logOptions),
 		top: (topOptions = {}) => leaf.startStreamingShell("top -m 10", topOptions),
-		keypress: (key) => leaf.shell(`input keyevent ${key}`),
+		keypress: (key) => leaf.shell(`input keyevent ${quoteShellArg(key)}`),
 		launchApp: (packageName, activity = "") => {
-			const activityArg = activity ? `/${activity}` : "";
-			return leaf.shell(`am start -n ${packageName}${activityArg}`);
+			// package/activity must reach `am start -n` as a single argument (a
+			// single "/"-joined token), so the combined value is quoted as one
+			// unit rather than quoting packageName and activity separately.
+			const target = activity ? `${packageName}/${activity}` : packageName;
+			return leaf.shell(`am start -n ${quoteShellArg(target)}`);
 		},
 		rebootBootloader: () => leaf.reboot("bootloader"),
 		rebootRecovery: () => leaf.reboot("recovery"),
