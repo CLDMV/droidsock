@@ -106,7 +106,7 @@ describe("connection.create - outgoing CNXN feature advertisement (see #8)", () 
 
 		const droidsock = await createDroidSock();
 		try {
-			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 			expect(device.isConnected()).toBe(true);
 
 			const payload = fakeServer.getCapturedCnxnPayload();
@@ -145,7 +145,7 @@ describe("devices leaf isConnected() - reflects unexpected socket teardown, not 
 
 		const droidsock = await createDroidSock();
 		try {
-			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 			expect(device.isConnected()).toBe(true);
 
 			// connection.connected is only ever set false by disconnect() - a
@@ -178,7 +178,7 @@ describe("devices leaf install() - streaming-then-classic fallback error handlin
 
 		const droidsock = await createDroidSock();
 		try {
-			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 			// Force the streaming attempt by hand - the fake server's minimal
 			// handshake doesn't advertise "cmd" for real.
 			device.connection.deviceFeatures = ["cmd"];
@@ -205,7 +205,7 @@ describe("devices leaf install() - streaming-then-classic fallback error handlin
 
 		const droidsock = await createDroidSock();
 		try {
-			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 			device.connection.deviceFeatures = ["cmd"];
 
 			vi.spyOn(droidsock.install, "streaming").mockRejectedValue(new Error("cmd package install not supported"));
@@ -238,7 +238,7 @@ describe("devices leaf convenience shell shortcuts - quote user-controlled argum
 
 		const droidsock = await createDroidSock();
 		try {
-			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 			const executeSpy = vi.spyOn(droidsock.shell, "execute").mockResolvedValue("");
 
 			// Metacharacters and an embedded quote - single-quoting must neutralize
@@ -280,7 +280,7 @@ describe("devices leaf convenience shell shortcuts - quote user-controlled argum
 	});
 });
 
-describe("devices leaf disconnect() - tolerates a failed api leaf removal, like connect()'s own stale-entry removal", () => {
+describe("devices leaf remove() - tolerates a failed api leaf removal", () => {
 	let fakeServer;
 	let keyDir;
 
@@ -298,14 +298,16 @@ describe("devices leaf disconnect() - tolerates a failed api leaf removal, like 
 
 		const droidsock = await createDroidSock();
 		try {
-			const device = await droidsock.devices.connect("127.0.0.1", fakeServer.port, { keyDir });
+			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 
 			vi.spyOn(droidsock.slothlet.api, "remove").mockRejectedValueOnce(new Error("devices.<key> not found"));
 
-			// Previously an unguarded await on api.remove() would propagate this
-			// rejection, masking that the underlying socket had already been torn
-			// down successfully by connection.disconnect() just before it.
-			await expect(device.disconnect()).resolves.toBeUndefined();
+			// An unguarded await on api.remove() would propagate this rejection,
+			// masking that the underlying socket had already been torn down
+			// successfully by connection.disconnect() just before it. disconnect()
+			// itself no longer touches api.remove() at all (see device.mjs) -
+			// only remove() does, so this scenario now lives here.
+			await expect(device.remove()).resolves.toBeUndefined();
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}

@@ -22,10 +22,13 @@ import {
 	isValidIP,
 	isValidPort,
 	parseHostPort,
+	sanitizeKey,
 	escapeShell,
 	quoteShellArg,
 	timeout,
-	withTimeout
+	withTimeout,
+	ipv6ToBigInt,
+	bigIntToIpv6
 } from "../src/api/utils.mjs";
 
 describe("utils.parseProperties", () => {
@@ -216,6 +219,130 @@ describe("utils.parseHostPort", () => {
 
 	test("throws on an invalid port", () => {
 		expect(() => parseHostPort("10.6.0.108:not-a-port")).toThrow("Invalid port");
+	});
+
+	test("parses a bracketed IPv6 host:port", () => {
+		expect(parseHostPort("[2001:db8::1]:5555")).toEqual({ host: "2001:db8::1", port: 5555 });
+	});
+
+	test("applies the default port to a bracketed IPv6 host with no port attached", () => {
+		expect(parseHostPort("[::1]")).toEqual({ host: "::1", port: 5555 });
+	});
+
+	test("throws on an unterminated bracket", () => {
+		expect(() => parseHostPort("[::1:5555")).toThrow("unterminated '['");
+	});
+
+	test("throws when a bracketed host isn't followed by ':port'", () => {
+		expect(() => parseHostPort("[::1]5555")).toThrow("expected ':' after ']'");
+	});
+
+	test("throws when the bracketed host is empty", () => {
+		expect(() => parseHostPort("[]:5555")).toThrow("bracketed host is not a valid IPv6 address");
+	});
+
+	test("throws when the bracketed host isn't a valid IPv6 literal", () => {
+		expect(() => parseHostPort("[not-ip]:5555")).toThrow("bracketed host is not a valid IPv6 address");
+		expect(() => parseHostPort("[10.6.0.108]:5555")).toThrow("bracketed host is not a valid IPv6 address");
+	});
+
+	test("throws on an invalid port after a bracketed host", () => {
+		expect(() => parseHostPort("[::1]:not-a-port")).toThrow("Invalid port");
+	});
+
+	test("accepts a bare, complete IPv6 literal with no port attached", () => {
+		expect(parseHostPort("2001:db8::1")).toEqual({ host: "2001:db8::1", port: 5555 });
+	});
+
+	test("rejects an ambiguous bare multi-colon string that isn't a valid IPv6 literal", () => {
+		expect(() => parseHostPort("not:a:valid:v6:literal")).toThrow("bracket an IPv6 address with a port");
+	});
+});
+
+describe("utils.sanitizeKey", () => {
+	test("maps '.' to a single underscore", () => {
+		expect(sanitizeKey("10.6.0.108")).toBe("10_6_0_108");
+	});
+
+	test("maps ':' to a double underscore, distinguishable from '.'", () => {
+		expect(sanitizeKey("10.6.0.108:5555")).toBe("10_6_0_108__5555");
+	});
+
+	test("a former '.' and a former ':' no longer collide", () => {
+		// The original scheme mapped both to a single "_", so an IPv4 dotted
+		// quad's separators and an IPv6 literal's colons could produce
+		// identical keys for genuinely different addresses.
+		const ipv4Key = sanitizeKey("1.2.3.4");
+		const ipv6Key = sanitizeKey("1:2:3:4");
+		expect(ipv4Key).not.toBe(ipv6Key);
+	});
+
+	test("handles an IPv6 host:port with adjacent colons", () => {
+		expect(sanitizeKey("fe80::1:5555")).toBe("fe80____1__5555");
+	});
+});
+
+describe("utils.ipv6ToBigInt / utils.bigIntToIpv6", () => {
+	const canonicalCases = [
+		["::", 0n],
+		["::1", 1n],
+		["1:2:3:4:5:6:7:8", 0x00010002000300040005000600070008n],
+		["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", (1n << 128n) - 1n]
+	];
+
+	test.each(canonicalCases)("round-trips %s", (text, value) => {
+		expect(ipv6ToBigInt(text)).toBe(value);
+		expect(bigIntToIpv6(value)).toBe(text);
+	});
+
+	test("leading zeros in a group don't affect the parsed value", () => {
+		expect(ipv6ToBigInt("0000:0000:0000:0000:0000:0000:0000:0001")).toBe(1n);
+	});
+
+	test("is case-insensitive on input, and always emits lowercase", () => {
+		expect(ipv6ToBigInt("FE80::1")).toBe(ipv6ToBigInt("fe80::1"));
+		expect(bigIntToIpv6(ipv6ToBigInt("FE80::1"))).toBe("fe80::1");
+	});
+
+	test("collapses the longest zero run, first run wins a tie (RFC 5952 4.2.3)", () => {
+		// 2001:db8:0:0:1:0:0:1 - two zero runs of length 2 - the first (before
+		// the "1") must be the one collapsed, not the second.
+		expect(bigIntToIpv6(0x20010db8000000000001000000000001n)).toBe("2001:db8::1:0:0:1");
+	});
+
+	test("never collapses a run of just one zero group (RFC 5952 4.2.2)", () => {
+		expect(bigIntToIpv6(0x20010db8000000010001000100010001n)).toBe("2001:db8:0:1:1:1:1:1");
+	});
+
+	test("handles an embedded dotted-IPv4 tail (RFC 4291 2.2.3) numerically, re-emitting hex groups", () => {
+		expect(ipv6ToBigInt("::ffff:192.0.2.1")).toBe(0xffffc0000201n);
+		expect(bigIntToIpv6(ipv6ToBigInt("::ffff:192.0.2.1"))).toBe("::ffff:c000:201");
+	});
+
+	test("rejects a zone/scope id instead of silently dropping it", () => {
+		expect(() => ipv6ToBigInt("fe80::1%eth0")).toThrow("Invalid IPv6 address");
+	});
+
+	test("rejects a non-IPv6 string", () => {
+		expect(() => ipv6ToBigInt("192.168.1.1")).toThrow("Invalid IPv6 address");
+		expect(() => ipv6ToBigInt("not-an-address")).toThrow("Invalid IPv6 address");
+	});
+
+	test("bigIntToIpv6 rejects a value outside 0..2**128-1", () => {
+		expect(() => bigIntToIpv6(-1n)).toThrow("Invalid IPv6 value");
+		expect(() => bigIntToIpv6(1n << 128n)).toThrow("Invalid IPv6 value");
+	});
+
+	test("bigIntToIpv6 rejects a non-BigInt value", () => {
+		expect(() => bigIntToIpv6(1)).toThrow("Invalid IPv6 value");
+		expect(() => bigIntToIpv6(null)).toThrow("Invalid IPv6 value");
+	});
+
+	test("cross-checked against the platform's own IPv6 canonicalization (WHATWG URL host parsing)", () => {
+		for (const [text] of canonicalCases) {
+			const oracle = new URL(`http://[${text}]/`).hostname.replace(/^\[|\]$/g, "");
+			expect(bigIntToIpv6(ipv6ToBigInt(text))).toBe(oracle);
+		}
 	});
 });
 
