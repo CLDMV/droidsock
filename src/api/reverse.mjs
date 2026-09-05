@@ -97,6 +97,13 @@ export async function start(___socket, streamManager, devicePort, hostPort, opti
 		const closeDeviceStream = () => streamManager.closeStream(deviceStream.localId);
 
 		deviceStream.on("data", (data) => {
+			// A device WRTE can still be in flight (or arrive before our CLSE
+			// reaches the device) after the local socket has already errored -
+			// localSocketConnected alone doesn't reflect that, so writing here
+			// would target an already-destroyed socket. Drop the data instead
+			// of also buffering it: the local target is gone, so nothing will
+			// ever flush pendingDeviceData for it anyway.
+			if (localSocketFailed) return;
 			if (localSocketConnected) {
 				localSocket.write(data);
 			} else {

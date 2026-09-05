@@ -261,6 +261,48 @@ describe("reverse.start", () => {
 		}
 	});
 
+	test("stops writing to the local socket once it has failed, even if the device sends more data afterward", async () => {
+		let acceptedSocket;
+		const target = net.createServer((socket) => {
+			acceptedSocket = socket;
+		});
+		await new Promise((resolve) => target.listen(0, "127.0.0.1", resolve));
+		const hostPort = target.address().port;
+
+		try {
+			const streamManager = createFakeStreamManager();
+			const onError = vi.fn();
+			const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, hostPort, { onError });
+			await vi.waitUntil(() => streamManager.openedStreams.length > 0);
+			streamManager.openedStreams[0].emit("data", Buffer.from("OKAY"));
+			await startPromise;
+
+			const deviceStream = streamManager.registerDeviceStream(createFakeAdbStream());
+			const localListenerAttached = onceEvent(deviceStream, "newListener");
+			streamManager.emit("remoteOpen", deviceStream, `tcp:${hostPort}`);
+			await localListenerAttached;
+			await vi.waitUntil(() => acceptedSocket !== undefined);
+
+			// A real TCP RST (not a graceful end()) so the LOCAL socket itself
+			// surfaces a genuine "error" event - the exact condition under test,
+			// distinct from the graceful-close path covered above.
+			acceptedSocket.resetAndDestroy();
+			await vi.waitUntil(() => onError.mock.calls.length > 0);
+
+			// The device keeps sending after the local socket has already
+			// failed - localSocketConnected alone doesn't reflect that, so
+			// without the fix this would attempt another write against the
+			// already-destroyed local socket, surfacing as a second onError()
+			// call from that write's own "error" event.
+			deviceStream.emit("data", Buffer.from("more-data-after-failure"));
+			await new Promise((resolve) => setImmediate(resolve));
+
+			expect(onError).toHaveBeenCalledTimes(1);
+		} finally {
+			await new Promise((resolve) => target.close(resolve));
+		}
+	});
+
 	test("ignores a remoteOpen tagged for a different hostPort - another reverse() call owns it", async () => {
 		const streamManager = createFakeStreamManager();
 		const startPromise = droidsock.reverse.start(fakeSocket, streamManager, 7000, 8000);
