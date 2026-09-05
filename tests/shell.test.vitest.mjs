@@ -427,12 +427,18 @@ describe("shell.commands - shell-quote every user-controlled argument", () => {
 	});
 
 	test("installApk() quotes the apk path and every flag", async () => {
-		const dest = await commandDestination(droidsock.shell.commands.installApk, "/sdcard/it's an app.apk", ["-r", "--user 0"]);
-		expect(dest).toBe("shell:pm install '-r' '--user 0' '/sdcard/it'\\''s an app.apk'");
+		const dest = await commandDestination(droidsock.shell.commands.installApk, "/sdcard/it's an app.apk", ["-r", "--user", "0"]);
+		expect(dest).toBe("shell:pm install '-r' '--user' '0' '/sdcard/it'\\''s an app.apk'");
 	});
 
 	test("installApk() with no flags quotes just the apk path", async () => {
 		expect(await commandDestination(droidsock.shell.commands.installApk, "/sdcard/app.apk")).toBe("shell:pm install '/sdcard/app.apk'");
+	});
+
+	test("installApk() rejects a flag containing whitespace instead of silently mis-tokenizing it", async () => {
+		const socket = createFakeShellSocket();
+		await expect(droidsock.shell.commands.installApk(socket, {}, "/sdcard/app.apk", ["--user 0"])).rejects.toThrow(/whitespace-free/);
+		expect(socket.writes).toHaveLength(0);
 	});
 
 	test("uninstallApp() quotes its package name argument", async () => {

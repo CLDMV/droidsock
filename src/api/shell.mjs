@@ -16,7 +16,7 @@
  */
 
 import { self } from "@cldmv/slothlet/runtime";
-import { quoteShellArg } from "./utils.mjs";
+import { quoteShellArg, assertValidFlags } from "./utils.mjs";
 
 /**
  * Executes a shell command and returns the output
@@ -406,10 +406,12 @@ export const commands = {
 	 * @param {Object} socket - ADB socket
 	 * @param {Object} streamManager - Stream manager
 	 * @param {string} apkPath - Path to APK file on device
-	 * @param {Array<string>} [flags=[]] - Installation flags
+	 * @param {Array<string>} [flags=[]] - Installation flags; each must be a non-empty, whitespace-free token (e.g. ["-r"], ["--user", "0"])
 	 * @returns {Promise<string>} Installation result
+	 * @throws {Error} If a flag contains whitespace or is otherwise invalid - see utils.assertValidFlags
 	 */
 	installApk: async (socket, streamManager, apkPath, flags = []) => {
+		assertValidFlags(flags);
 		const flagsStr = flags.length > 0 ? ` ${flags.map(quoteShellArg).join(" ")}` : "";
 		return await execute(socket, streamManager, `pm install${flagsStr} ${quoteShellArg(apkPath)}`);
 	},
