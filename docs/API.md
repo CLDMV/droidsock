@@ -4,26 +4,38 @@
 
 The default export, and the quick path - creates a DroidSock API instance. `options.mode` (`"eager"` or `"lazy"`, default `"eager"`), `options.context`, and `options.config` are all optional. Also available under the explicit name `createDroidSock` (`import { createDroidSock } from "@cldmv/droidsock"`) for callers who prefer it - both names are the exact same function.
 
-## devices.connect(host, port, options)
+## device.connect(host, port, options) / device.disconnect(host, port) / device.remove(host, port)
 
-- `host`: Device IP address
-- `port`: ADB port (default: `5555`)
-- `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
+Single-target operations - the module name (singular `device`) disambiguates them from the collection-wide operations on `devices` below. A device leaf, once created, is a persistent handle that outlives any one TCP connection: `disconnect()` only tears down the current socket, it does **not** forget the device - `connect()` on the same `host:port` later reconnects that exact same leaf, reusing whatever `options` it was created with, so a reference you're holding stays valid and you never have to re-supply `host`/`port`/`options` just to reconnect. `remove()` is the separate, explicit "forget this device" operation.
 
-Connects to a device and returns its live leaf. Calling `connect()` again for the same `host:port` returns the existing connection rather than opening a new one. The returned device is also reachable afterward directly off the api tree - not just via the value `connect()` returned - at `api.devices["<sanitized host_port>"]`, where dots and colons in `host:port` are replaced with underscores (e.g. `10.6.0.108:5555` → `api.devices["10_6_0_108_5555"]`). Every connected device lives there for the life of the connection; there is no separate registry to fall out of sync with the live api.
+- `connect(host, port, options)`:
+  - `host`: Device IP address (IPv4 or IPv6)
+  - `port`: ADB port (default: `5555`)
+  - `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
 
-## devices.list() / devices.disconnect(host, port) / devices.disconnectAll()
+  Connects to a device and returns its live leaf. Calling `connect()` again for the same `host:port` reuses the same leaf - if it's already connected, that connection is returned as-is; if it had disconnected, it's reconnected in place. An `options` argument passed on a later call only overrides the fields it provides (e.g. a different `keyDir`); anything omitted falls back to what the device was created with. The device is also reachable afterward directly off the api tree - not just via the value `connect()` returned - at `api.devices["<sanitized host_port>"]`, where a `.` in `host:port` becomes a single `_` and a `:` becomes a double `__` (the two would otherwise collide into indistinguishable runs of underscores for an IPv6 host), e.g. `10.6.0.108:5555` → `api.devices["10_6_0_108__5555"]`. Every device that's ever been connected lives there until explicitly `remove()`d.
 
-- `list()`: Returns an array of the currently-connected device leaves.
-- `disconnect(host, port)`: Disconnects a specific device (default port `5555`). Returns `true` if a matching device was found, `false` otherwise. **Async** - `await` it.
-- `disconnectAll()`: Disconnects every known device leaf, including stale entries left over from an unexpected disconnect (not just the currently-connected ones `list()` returns). Returns the number disconnected. **Async** - `await` it.
+- `disconnect(host, port)`: Tears down a specific device's connection without forgetting it (default port `5555`) - its leaf stays mounted and reconnectable. Returns `true` if a matching device was found, `false` otherwise. Synchronous.
+
+- `remove(host, port)`: Disconnects (if needed) and unmounts a specific device's leaf entirely - the actual "forget this device" operation. Returns `true` if a matching device was found, `false` otherwise. **Async** - `await` it.
+
+## devices.list() / devices.disconnect() / devices.remove() / devices.get(idOrLeaf)
+
+Collection-wide operations, mounted alongside every device's own leaf at `api.devices.<sanitized host_port>`.
+
+- `list()`: Returns an array of the currently-connected device leaves. A known-but-disconnected device is not included.
+- `disconnect()`: Takes **no arguments** - disconnects every known device (connected or not; a no-op for one that's already disconnected), keeping every leaf mounted for later reconnection. Returns the number disconnected. Synchronous. Throws if called with any argument, catching a mix-up with the single-target `device.disconnect(host, port)`.
+- `remove()`: Takes **no arguments** - disconnects and unmounts every known device leaf. Returns the number removed. **Async** - `await` it. Throws if called with any argument, catching a mix-up with the single-target `device.remove(host, port)`.
+- `get(idOrLeaf)`: Looks up a device leaf - connected or currently disconnected - by `"host:port"` string (bracket an IPv6 host with a port, e.g. `"[2001:db8::1]:5555"`) or by the leaf object itself (as returned by `connect()`). Returns `undefined` only for a device that was never connected or has since been `remove()`d.
 
 ## The device object (returned by connect())
 
 ### Connection
 
-- `isConnected()`: Check connection status
-- `disconnect()`: Disconnect from device and remove it from `api.devices`. **Async** - `await` it.
+- `isConnected()`: Check connection status - always reflects the live socket state.
+- `disconnect()`: Disconnect without forgetting this device - its leaf stays mounted at `api.devices` and can be reconnected later via `device.connect(host, port)`. Synchronous.
+- `reconnect(options)`: Re-establishes the connection for this same leaf; a no-op if already connected. `options` overrides only the fields it provides, falling back to whatever this device was created (or last reconnected) with. **Async** - `await` it. (`device.connect(host, port, options)` calls this automatically when the target is already known but disconnected - most callers won't need to call it directly.)
+- `remove()`: Disconnects (if needed) and unmounts this device's leaf from `api.devices` - the same operation as `device.remove(host, port)`, called on the leaf directly. **Async** - `await` it.
 
 ### Shell Commands
 

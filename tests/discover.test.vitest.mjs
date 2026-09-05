@@ -15,6 +15,29 @@ import { describe, test, expect, afterEach } from "vitest";
 import net from "node:net";
 import dgram from "node:dgram";
 import createDroidSock from "../index.mjs";
+import { ipv6ToBigInt } from "../src/api/utils.mjs";
+
+// CI runners aren't guaranteed to have IPv6 loopback available - probe once
+// and skip only the tests that need a real IPv6 socket bind. The pure
+// BigInt/CIDR-math tests need no network at all and always run.
+const hasIpv6Loopback = await new Promise((resolve) => {
+	const probe = net.createServer();
+	probe.once("error", () => resolve(false));
+	probe.listen(0, "::1", () => probe.close(() => resolve(true)));
+});
+
+/**
+ * Encodes an IPv6 address string into its raw 16-byte AAAA rdata form.
+ * @param {string} address - IPv6 literal.
+ * @returns {Buffer} 16-byte address.
+ */
+function ipv6ToBytes(address) {
+	const value = ipv6ToBigInt(address);
+	const buf = Buffer.alloc(16);
+	buf.writeBigUInt64BE(value >> 64n, 0);
+	buf.writeBigUInt64BE(value & 0xffffffffffffffffn, 8);
+	return buf;
+}
 
 // Following the repo's established preference for real loopback I/O over
 // mocking node:net/node:dgram (see forward.test.vitest.mjs): subnet() is
@@ -124,6 +147,110 @@ describe("discover.subnet", () => {
 	test("accepts /0 as valid CIDR syntax, rejecting it via maxHosts rather than as an invalid prefix", async () => {
 		droidsock = await createDroidSock();
 		await expect(droidsock.discover.subnet("0.0.0.0/0", 5555, { maxHosts: 1024 })).rejects.toThrow(/maxHosts/);
+	});
+
+	test("reachable hosts stay in ascending address order across a sweep", async () => {
+		// Targets the sort comparator directly: sorting by a re-parsed host
+		// (rather than sweep index) either throws for an IPv6 BigInt result or
+		// silently no-sorts on NaN - this pins the correct (sorted) outcome for
+		// the plain-IPv4 case the comparator has always had to handle too.
+		droidsock = await createDroidSock();
+		const portA = await listenOn("127.0.0.5");
+		const server6 = net.createServer((socket) => socket.end());
+		await new Promise((resolve, reject) => {
+			server6.once("error", reject);
+			server6.listen(portA, "127.0.0.6", resolve);
+		});
+		openServers.push(server6);
+
+		const results = await droidsock.discover.subnet("127.0.0.4/30", portA, { timeoutMs: 300 });
+		expect(results).toEqual([
+			{ host: "127.0.0.5", port: portA },
+			{ host: "127.0.0.6", port: portA }
+		]);
+	});
+});
+
+describe("discover.subnet - IPv6 CIDR boundaries (host counts, no network needed)", () => {
+	test("a /126 has exactly 4 sweepable hosts - no network/broadcast exclusion, unlike IPv4", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("2001:db8::/126", 5555, { maxHosts: 3 })).rejects.toThrow(/has 4 sweepable host\(s\)/);
+	});
+
+	test("a /127 has exactly 2 sweepable hosts", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("2001:db8::/127", 5555, { maxHosts: 1 })).rejects.toThrow(/has 2 sweepable host\(s\)/);
+	});
+
+	test("a /128 has exactly 1 sweepable host - the maxHosts guard does not fire", async () => {
+		droidsock = await createDroidSock();
+		const results = await droidsock.discover.subnet("2001:db8::1/128", 5555, { maxHosts: 1, timeoutMs: 200 });
+		expect(results).toEqual([]);
+	});
+
+	test("IPv4 exclusion regression: a /30 still excludes network+broadcast (2 sweepable hosts, not 4)", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("127.0.0.4/30", 5555, { maxHosts: 1 })).rejects.toThrow(/has 2 sweepable host\(s\)/);
+	});
+
+	test("an IPv6 /64 is rejected with its real, exact BigInt count", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("2001:db8::/64", 5555, { maxHosts: 1024 })).rejects.toThrow(
+			/has 18446744073709551616 sweepable host\(s\)/
+		);
+	});
+
+	test("::/0 is rejected with its real, exact (astronomically large) BigInt count", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("::/0", 5555, { maxHosts: 1024 })).rejects.toThrow(
+			/has 340282366920938463463374607431768211456 sweepable host\(s\)/
+		);
+	});
+
+	test("a huge count never renders as Infinity or scientific notation", async () => {
+		droidsock = await createDroidSock();
+		try {
+			await droidsock.discover.subnet("2001:db8::/32", 5555, { maxHosts: 1024 });
+			throw new Error("expected subnet() to reject");
+		} catch (error) {
+			expect(error.message).toMatch(/sweepable host\(s\)/);
+			expect(error.message).not.toMatch(/Infinity|e\+/);
+		}
+	});
+
+	test("rejects an IPv6 prefix over 128", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("2001:db8::/129", 5555)).rejects.toThrow("Invalid CIDR prefix (must be 0-128)");
+	});
+
+	test("the prefix bound is family-derived, not a hardcoded number - the same numeral means different limits", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("192.168.0.0/33", 5555)).rejects.toThrow("Invalid CIDR prefix (must be 0-32)");
+		await expect(droidsock.discover.subnet("2001:db8::/33", 5555, { maxHosts: 1024 })).rejects.toThrow(/maxHosts/);
+	});
+
+	test("rejects a zone/scope id in a CIDR base address", async () => {
+		// net.isIP() accepts a zone id (so the CIDR's family detection succeeds),
+		// but ipv6ToBigInt() rejects it - see utils.mjs's ipv6ToBigInt for why a
+		// zone can't be represented in a 128-bit value. The more specific error
+		// from ipv6ToBigInt surfaces here rather than a generic "Invalid CIDR".
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.subnet("fe80::1%eth0/128", 5555)).rejects.toThrow("Invalid IPv6 address");
+	});
+});
+
+describe.skipIf(!hasIpv6Loopback)("discover.subnet - real IPv6 loopback", () => {
+	test("finds a real IPv6 loopback listener via a /128 sweep", async () => {
+		droidsock = await createDroidSock();
+		const port = await listenOn("::1");
+		const results = await droidsock.discover.subnet("::1/128", port, { timeoutMs: 300 });
+		expect(results).toEqual([{ host: "::1", port }]);
+	});
+
+	test("finds nothing on a /127 sweep of ::2 - deliberately never sweeps :: itself (matches any local listener, like 0.0.0.0)", async () => {
+		droidsock = await createDroidSock();
+		const results = await droidsock.discover.subnet("::2/127", 65534, { timeoutMs: 200 });
+		expect(results).toEqual([]);
 	});
 });
 
@@ -746,5 +873,229 @@ describe("discover.mdns", () => {
 		droidsock = await createDroidSock();
 		await expect(droidsock.discover.mdns({ timeoutMs: 0 })).rejects.toThrow("Invalid timeoutMs");
 		await expect(droidsock.discover.mdns({ timeoutMs: -5 })).rejects.toThrow("Invalid timeoutMs");
+	});
+});
+
+describe("discover.mdns - IPv6 (AAAA), over the existing IPv4 (udp4) transport", () => {
+	test("rejects an invalid family", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ family: 5 })).rejects.toThrow("Invalid family");
+	});
+
+	test("rejects a family that doesn't match a given literal address", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ family: 6, address: "127.0.0.1", port: 5353 })).rejects.toThrow("Invalid address");
+	});
+
+	test("rejects a non-string address without ever opening a socket", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ address: 12345 })).rejects.toThrow("Invalid address");
+		await expect(droidsock.discover.mdns({ address: {} })).rejects.toThrow("Invalid address");
+	});
+
+	test("rejects a non-string multicastInterface", async () => {
+		droidsock = await createDroidSock();
+		await expect(droidsock.discover.mdns({ multicastInterface: 12345 })).rejects.toThrow("Invalid multicastInterface");
+	});
+
+	test("AAAA rdata resolves a device entry - correlation doesn't depend on the query's own transport family", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "AAAA Device._adb-tls-connect._tcp.local";
+		const hostname = "aaaa-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(4242, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+			const aaaaRecord = buildRecord(hostname, 28, ipv6ToBytes("2001:db8::42"));
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header.writeUInt16BE(2, 10); // ARCOUNT: SRV + AAAA
+			responder.send(Buffer.concat([header, ptrRecord, srvRecord, aaaaRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "2001:db8::42", port: 4242, txt: {} }]);
+	});
+
+	test("ignores a malformed AAAA record (wrong rdlength) instead of caching a garbage address", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Bad AAAA Device._adb-tls-connect._tcp.local";
+		const hostname = "bad-aaaa-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(5555, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+			// Malformed AAAA: only 8 rdata bytes instead of the required 16.
+			const badAaaaRecord = buildRecord(hostname, 28, Buffer.alloc(8));
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header.writeUInt16BE(2, 10); // ARCOUNT: SRV + bad AAAA
+			responder.send(Buffer.concat([header, ptrRecord, srvRecord, badAaaaRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 300
+		});
+
+		expect(results).toEqual([]);
+	});
+
+	test("a malformed AAAA record never clobbers a previously cached valid address", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Stale AAAA Device._adb-tls-connect._tcp.local";
+		const hostname = "stale-aaaa-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(5557, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+			const goodAaaaRecord = buildRecord(hostname, 28, ipv6ToBytes("2001:db8::99"));
+
+			const header1 = Buffer.alloc(12);
+			header1.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header1.writeUInt16BE(2, 10); // ARCOUNT: SRV + AAAA
+			// UDP doesn't guarantee delivery order - sending the second message
+			// from the first send()'s own completion callback makes the enqueue
+			// order deterministic instead of relying on it.
+			responder.send(Buffer.concat([header1, ptrRecord, srvRecord, goodAaaaRecord]), rinfo.port, rinfo.address, () => {
+				const badAaaaRecord = buildRecord(hostname, 28, Buffer.alloc(8));
+				const header2 = Buffer.alloc(12);
+				header2.writeUInt16BE(1, 10); // ARCOUNT: bad AAAA
+				responder.send(Buffer.concat([header2, badAaaaRecord]), rinfo.port, rinfo.address);
+			});
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "2001:db8::99", port: 5557, txt: {} }]);
+	});
+
+	test("a routable A record beats a link-local AAAA for the same hostname, regardless of which arrives first (address ranking)", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp4");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "127.0.0.1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "Dual Stack Device._adb-tls-connect._tcp.local";
+		const hostname = "dual-stack-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(6001, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+			// A real Android wireless-debugging responder routinely advertises
+			// both - the link-local AAAA is unusable here (no zone/scope id to
+			// carry it), so the routable A must win even though it's processed
+			// FIRST here (a naive last-record-wins would let the AAAA below
+			// clobber it - only the ranking prevents that).
+			const aRecord = buildRecord(hostname, 1, Buffer.from([10, 0, 0, 55]));
+			const aaaaRecord = buildRecord(hostname, 28, ipv6ToBytes("fe80::1"));
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(1, 6); // ANCOUNT: PTR
+			header.writeUInt16BE(3, 10); // ARCOUNT: SRV + A + AAAA
+			responder.send(Buffer.concat([header, ptrRecord, srvRecord, aRecord, aaaaRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			address: "127.0.0.1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "10.0.0.55", port: 6001, txt: {} }]);
+	});
+});
+
+describe.skipIf(!hasIpv6Loopback)("discover.mdns - real IPv6 (udp6) transport", () => {
+	test("queries over a real udp6 socket and resolves a PTR+SRV+TXT+AAAA response", async () => {
+		droidsock = await createDroidSock();
+
+		const responder = dgram.createSocket("udp6");
+		openSockets.push(responder);
+		const responderPort = await new Promise((resolve) => {
+			responder.bind(0, "::1", () => resolve(responder.address().port));
+		});
+
+		const serviceType = "_adb-tls-connect._tcp.local";
+		const instanceName = "IPv6 Device._adb-tls-connect._tcp.local";
+		const hostname = "ipv6-device.local";
+
+		responder.on("message", (_msg, rinfo) => {
+			const ptrRecord = buildRecord(serviceType, 12, encodeName(instanceName));
+			const srvRdata = Buffer.alloc(6);
+			srvRdata.writeUInt16BE(6002, 4);
+			const srvRecord = buildRecord(instanceName, 33, Buffer.concat([srvRdata, encodeName(hostname)]));
+			const txtRdata = Buffer.concat([Buffer.from([4]), Buffer.from("a=v6", "utf8")]);
+			const txtRecord = buildRecord(instanceName, 16, txtRdata);
+			const aaaaRecord = buildRecord(hostname, 28, ipv6ToBytes("2001:db8::6"));
+
+			const header = Buffer.alloc(12);
+			header.writeUInt16BE(2, 6); // ANCOUNT: PTR + TXT
+			header.writeUInt16BE(2, 10); // ARCOUNT: SRV + AAAA
+			responder.send(Buffer.concat([header, ptrRecord, txtRecord, srvRecord, aaaaRecord]), rinfo.port, rinfo.address);
+		});
+
+		const results = await droidsock.discover.mdns({
+			serviceType,
+			family: 6,
+			address: "::1",
+			port: responderPort,
+			timeoutMs: 400
+		});
+
+		expect(results).toEqual([{ name: instanceName, host: "2001:db8::6", port: 6002, txt: { a: "v6" } }]);
+		expect(Object.getPrototypeOf(results[0].txt)).toBeNull();
 	});
 });

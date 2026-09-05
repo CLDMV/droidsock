@@ -12,230 +12,27 @@
  */
 
 /**
- * Device connection and management API module for DroidSock.
- *
- * Connected devices live directly on this module's own slothlet namespace
- * (self.devices / api.devices) as real, individually-addressable leaves -
- * not in a local variable private to this file. connect() mounts each new
- * connection with api.slothlet.api.add() (docs/RELOAD.md) at
- * `devices.<sanitized host_port>`, alongside this module's own
- * connect/list/disconnect/disconnectAll exports, and disconnect() unmounts
- * it the same way. self access inside a device's methods works correctly on
- * every call because they're genuine tree leaves invoked through the normal
- * apply-trap path - unlike a plain object returned from an async function
- * (which depends on slothlet's class-instance context-preservation
- * mechanism, and that mechanism never actually fires for an async function's
- * return value - see the linked issue below), and unlike a plain
- * `self.devices[key] = <object>` assignment (slothlet's documented
- * "wrap-on-set" behavior, CONTEXT-PROPAGATION.md - empirically this does NOT
- * give the assigned object's methods working self access the way add() does,
- * despite the doc describing it as using "the same wrapper construction").
+ * Device connection registry API module for DroidSock - the collection-wide
+ * counterpart to device.mjs's single-target connect()/disconnect()/remove().
+ * Every device that has ever been connected lives directly on this module's
+ * own slothlet namespace (self.devices / api.devices) as a real,
+ * individually-addressable leaf mounted by device.connect() (docs/RELOAD.md)
+ * - disconnecting a device does NOT unmount its leaf (see device.mjs's
+ * module doc), so list/disconnect/remove/get here operate over every known
+ * device, connected or not, unless noted. Naming: the module boundary itself
+ * disambiguates single vs. collection, so `disconnect()`/`remove()` here
+ * take no arguments and mean "all" - `api.device.disconnect(host, port)` /
+ * `api.device.remove(host, port)` are the single-target ops.
  */
 
 import { self } from "@cldmv/slothlet/runtime";
-import { quoteShellArg } from "./utils.mjs";
-
-/**
- * Sanitizes a `host:port` device id into a slothlet-safe api-path segment.
- * `.` and `:` are ordinary characters in an IP:port string but are the
- * tree's own path-separator-adjacent punctuation, so they're replaced.
- * @param {string} deviceId - `${host}:${port}`
- * @returns {string} A path-safe key, e.g. "10_6_0_108_5555"
- */
-function sanitizeKey(deviceId) {
-	return deviceId.replace(/[.:]/g, "_");
-}
-
-/**
- * Builds the per-device leaf object assigned onto self.devices[key]. Every
- * function here becomes a real, individually-wrapped slothlet leaf once
- * assigned - see the module doc comment above.
- * @param {string} host - Device host/IP address
- * @param {number} port - Device port
- * @param {string} deviceId - `${host}:${port}`
- * @param {string} deviceKey - Sanitized api-path segment for this device
- * @param {Object} connection - The underlying connection object (see connection.mjs)
- * @param {Object} streamManager - The underlying stream manager (see stream.mjs)
- * @returns {Object} The device leaf
- */
-function buildDeviceLeaf(host, port, deviceId, deviceKey, connection, streamManager) {
-	/**
-	 * Throws if this device isn't connected and authorized. Shared guard for every method below.
-	 */
-	function assertReady() {
-		if (!leaf.isConnected()) {
-			throw new Error("Device not connected");
-		}
-		if (!connection.authorized) {
-			throw new Error("Device not authorized. Please accept authorization dialog.");
-		}
-	}
-
-	const leaf = {
-		host,
-		port,
-		deviceId,
-
-		// connection.connected is only ever set false by disconnect() -
-		// nothing updates it if the underlying TCP socket dies unexpectedly
-		// (device unplugged, network drop), so it can go stale and keep
-		// reporting connected. socket.destroyed is live, authoritative state
-		// regardless of why the socket went away, so check it directly rather
-		// than trusting the flag alone - connect()'s reuse-vs-reconnect
-		// decision depends entirely on this being accurate.
-		isConnected: () => Boolean(connection && connection.connected && connection.socket && !connection.socket.destroyed),
-
-		// Closing the socket and detaching this leaf from the tree are both
-		// this method's job - a device that's gone shouldn't leave a stale
-		// api.devices.<key> entry behind.
-		disconnect: async () => {
-			if (connection) connection.disconnect();
-			// Best-effort, like connect()'s own stale-entry removal - an already-
-			// removed entry (e.g. a repeated disconnect() call) would otherwise
-			// throw here and mask that the socket was already torn down above.
-			await self.slothlet.api.remove(`devices.${deviceKey}`).catch(() => {});
-		},
-
-		shell: async (command, shellOptions = {}) => {
-			assertReady();
-			return await self.shell.execute(connection.socket, streamManager, command, {
-				...shellOptions,
-				deviceFeatures: connection.deviceFeatures || []
-			});
-		},
-
-		startStreamingShell: (command, shellOptions = {}) => {
-			assertReady();
-			return self.shell.startStreaming(connection.socket, streamManager, command, shellOptions);
-		},
-
-		startInteractiveShell: (command, shellOptions = {}) => {
-			assertReady();
-			return self.shell.startInteractive(connection.socket, streamManager, command, shellOptions);
-		},
-
-		push: async (localPath, remotePath, transferOptions = {}) => {
-			assertReady();
-			return await self.files.push(connection.socket, streamManager, localPath, remotePath, transferOptions);
-		},
-
-		pull: async (remotePath, localPath, transferOptions = {}) => {
-			assertReady();
-			return await self.files.pull(connection.socket, streamManager, remotePath, localPath, transferOptions);
-		},
-
-		// SYNC V2 (64-bit) variants - see self.files.pushV2/pullV2 for the
-		// wire-level rationale. EXPERIMENTAL, same caveats as push/pull.
-		pushV2: async (localPath, remotePath, transferOptions = {}) => {
-			assertReady();
-			return await self.files.pushV2(connection.socket, streamManager, localPath, remotePath, transferOptions);
-		},
-
-		pullV2: async (remotePath, localPath, transferOptions = {}) => {
-			assertReady();
-			return await self.files.pullV2(connection.socket, streamManager, remotePath, localPath, transferOptions);
-		},
-
-		list: async (remotePath) => {
-			assertReady();
-			return await self.files.list(connection.socket, streamManager, remotePath);
-		},
-
-		stat: async (remotePath) => {
-			assertReady();
-			return await self.files.stat(connection.socket, streamManager, remotePath);
-		},
-
-		listV2: async (remotePath) => {
-			assertReady();
-			return await self.files.listV2(connection.socket, streamManager, remotePath);
-		},
-
-		statV2: async (remotePath) => {
-			assertReady();
-			return await self.files.statV2(connection.socket, streamManager, remotePath);
-		},
-
-		// Reboot (real ADB `reboot:` service - see also the shell-based
-		// `device.shell("reboot")` fallback, kept for compatibility)
-		reboot: async (mode = "") => {
-			assertReady();
-			return await self.reboot.execute(connection.socket, streamManager, mode);
-		},
-
-		// Port forwarding (adb forward equivalent) - see also self.forward
-		forward: async (devicePort, forwardOptions = {}) => {
-			assertReady();
-			return await self.forward.start(connection.socket, streamManager, devicePort, forwardOptions);
-		},
-
-		// Reverse port forwarding (adb reverse equivalent) - see also self.reverse
-		reverse: async (devicePort, hostPort, reverseOptions = {}) => {
-			assertReady();
-			return await self.reverse.start(connection.socket, streamManager, devicePort, hostPort, reverseOptions);
-		},
-
-		// Local APK install (adb install equivalent). Tries the modern streaming
-		// install (self.install.streaming) when the device advertised the "cmd"
-		// feature during the CNXN handshake, falling back to the classic
-		// push-then-install flow (self.install.classic) otherwise, or if the
-		// streaming attempt itself fails partway through (e.g. a device that
-		// advertises "cmd" but doesn't actually support `cmd package install`).
-		install: async (localPath, installOptions = {}) => {
-			assertReady();
-			if ((connection.deviceFeatures || []).includes("cmd")) {
-				try {
-					return await self.install.streaming(connection.socket, streamManager, localPath, installOptions);
-				} catch (streamingError) {
-					// Fall through to the classic push-then-install flow - but if
-					// that ALSO fails, surface the original streaming failure
-					// alongside it. Discarding streamingError unconditionally
-					// would lose the real cause whenever classic fails too (the
-					// caller would only ever see the classic error).
-					try {
-						return await self.install.classic(connection.socket, streamManager, localPath, installOptions);
-					} catch (classicError) {
-						throw new Error(
-							`Streaming install failed (${streamingError.message}), and the classic fallback also failed: ${classicError.message}`,
-							{ cause: classicError }
-						);
-					}
-				}
-			}
-			return await self.install.classic(connection.socket, streamManager, localPath, installOptions);
-		},
-
-		// Convenience shell shortcuts
-		ls: (path = ".") => leaf.shell(`ls -la ${quoteShellArg(path)}`),
-		pwd: () => leaf.shell("pwd"),
-		getprop: (prop = null) => leaf.shell(prop ? `getprop ${quoteShellArg(prop)}` : "getprop"),
-		getModel: () => leaf.shell("getprop ro.product.model"),
-		getAndroidVersion: () => leaf.shell("getprop ro.build.version.release"),
-		getBattery: () => leaf.shell("dumpsys battery"),
-		screenshot: (filename = "/sdcard/screenshot.png") => leaf.shell(`screencap -p ${quoteShellArg(filename)}`),
-		logcat: (logOptions = {}) => leaf.startStreamingShell("logcat", logOptions),
-		top: (topOptions = {}) => leaf.startStreamingShell("top -m 10", topOptions),
-		keypress: (key) => leaf.shell(`input keyevent ${quoteShellArg(key)}`),
-		launchApp: (packageName, activity = "") => {
-			// package/activity must reach `am start -n` as a single argument (a
-			// single "/"-joined token), so the combined value is quoted as one
-			// unit rather than quoting packageName and activity separately.
-			const target = activity ? `${packageName}/${activity}` : packageName;
-			return leaf.shell(`am start -n ${quoteShellArg(target)}`);
-		},
-		rebootBootloader: () => leaf.reboot("bootloader"),
-		rebootRecovery: () => leaf.reboot("recovery"),
-		rebootSideload: () => leaf.reboot("sideload")
-	};
-
-	return leaf;
-}
+import { parseHostPort, sanitizeKey } from "./utils.mjs";
 
 /**
  * Returns the live device-leaf entries under self.devices, excluding this
- * module's own connect/list/disconnect/disconnectAll siblings (identified by
- * having a callable isConnected() - the module's own exports are functions,
- * not objects, so this needs no hardcoded name list).
+ * module's own list/disconnect/remove/get siblings (identified by having a
+ * callable isConnected() - the module's own exports are functions, not
+ * objects, so this needs no hardcoded name list).
  * @returns {Array<Object>} Device leaf entries (regardless of connected state)
  */
 function deviceEntries() {
@@ -246,68 +43,10 @@ function deviceEntries() {
 }
 
 /**
- * Connects to an ADB device. Registers the connection as a real leaf at
- * self.devices[key] (see the module doc comment above) and returns that
- * same leaf.
- * @param {string} host - Device host/IP address
- * @param {number} [port=5555] - Device port
- * @param {Object} [options={}] - Connection options
- * @param {string} [options.keyDir] - Directory for RSA keys (default: ~/.adb)
- * @returns {Promise<Object>} The device leaf (also reachable at api.devices.<sanitized host_port>)
- */
-export async function connect(host, port = 5555, options = {}) {
-	const deviceId = `${host}:${port}`;
-	const deviceKey = sanitizeKey(deviceId);
-
-	const existing = self.devices && self.devices[deviceKey];
-	if (existing) {
-		if (existing.isConnected()) {
-			return existing;
-		}
-		// Stale entry from a prior connection that dropped without disconnect() -
-		// detach it before mounting a fresh one at the same key.
-		await self.slothlet.api.remove(`devices.${deviceKey}`).catch(() => {});
-	}
-
-	// Get or create RSA keys using self.auth
-	const keys = await self.auth.getKeys(options.keyDir);
-
-	// Create connection using self.connection
-	const connection = await self.connection.create({
-		host,
-		port,
-		publicKey: keys.publicKey,
-		privateKey: keys.privateKey,
-		adbPublicKey: keys.adbPublicKey
-	});
-
-	// Create stream manager using self.stream
-	const streamManager = await self.stream.create(connection.socket);
-
-	// Set up packet routing
-	connection.onUnhandledPacket = (packet) => streamManager.handlePacket(packet);
-
-	const leaf = buildDeviceLeaf(host, port, deviceId, deviceKey, connection, streamManager);
-
-	await self.slothlet.api.add(`devices.${deviceKey}`, leaf, { moduleID: `device:${deviceId}` });
-
-	// connection/streamManager are assigned onto the mounted leaf AFTER add()
-	// rather than included in the object passed to it: add()'s flatten+wrap
-	// pipeline hangs indefinitely when a real net.Socket (deeply nested,
-	// self-referential internals) is present anywhere in its input - a plain
-	// property write on the already-mounted wrapper doesn't have the same
-	// problem and is how the framework's own "wrap-on-set" mechanism is
-	// documented to work (CONTEXT-PROPAGATION.md). Confirmed these are still
-	// externally readable (device.connection.socket, device.streamManager)
-	// exactly as documented in docs/API.md.
-	self.devices[deviceKey].connection = connection;
-	self.devices[deviceKey].streamManager = streamManager;
-
-	return self.devices[deviceKey];
-}
-
-/**
- * Lists all currently-connected devices.
+ * Lists all currently-connected devices. A device that's known but currently
+ * disconnected (still mounted, reconnectable via device.connect()) is NOT
+ * included here - use get()/deviceEntries-style enumeration if you need
+ * every known device regardless of connection state.
  * @returns {Array<Object>} Connected device leaves
  */
 export function list() {
@@ -315,30 +54,72 @@ export function list() {
 }
 
 /**
- * Disconnects from a specific device.
- * @param {string} host - Device host
- * @param {number} [port=5555] - Device port
- * @returns {Promise<boolean>} True if a device was found and disconnected
+ * Looks up a device leaf - connected or currently disconnected - by
+ * "host:port" string or by the leaf object itself (as returned by
+ * device.connect()). Since disconnect() no longer unmounts a leaf, this
+ * reliably re-resolves the SAME object across a disconnect/reconnect cycle;
+ * it only returns undefined for a device that was never connected or has
+ * since been forgotten via remove().
+ * @param {string|Object} idOrLeaf - "host:port" (bracket the host for IPv6,
+ *   e.g. "[2001:db8::1]:5555"), a bare host with the default port applied, or
+ *   a device leaf object.
+ * @returns {Object|undefined} The device leaf, or undefined if not mounted.
  */
-export async function disconnect(host, port = 5555) {
-	const deviceKey = sanitizeKey(`${host}:${port}`);
-	const entry = self.devices && self.devices[deviceKey];
-	if (!entry) {
-		return false;
+export function get(idOrLeaf) {
+	let host, port;
+	if (idOrLeaf && typeof idOrLeaf === "object") {
+		({ host, port } = idOrLeaf);
+	} else {
+		({ host, port } = parseHostPort(String(idOrLeaf)));
 	}
-	await entry.disconnect();
-	return true;
+	const key = sanitizeKey(`${host}:${port}`);
+	return (self.devices && self.devices[key]) || undefined;
 }
 
 /**
- * Disconnects from all devices.
- * @returns {Promise<number>} Number of devices disconnected
+ * Disconnects every known device (connected or not - a no-op for one
+ * that's already disconnected), keeping every leaf mounted for later
+ * reconnection. Takes no arguments - the module boundary already means
+ * "all"; use `api.device.disconnect(host, port)` to disconnect one.
+ * Rejecting any argument here (rather than silently ignoring it) catches a
+ * caller who confuses this with the single-target op before it disconnects
+ * everything by accident. Synchronous - see device.mjs's disconnect() for why.
+ * @returns {number} Number of devices disconnected
  */
-export async function disconnectAll() {
+export function disconnect() {
+	if (arguments.length > 0) {
+		throw new Error("devices.disconnect() takes no arguments - it disconnects ALL devices. Use device.disconnect(host, port) for one.");
+	}
+	// Only count (and call disconnect() on) entries that are actually
+	// connected - deviceEntries() returns every known device regardless of
+	// state, and disconnect() is a no-op for one that's already
+	// disconnected, so counting all of them would make two consecutive
+	// calls report the same "number disconnected" even though the second
+	// call disconnected nothing.
+	let count = 0;
+	for (const entry of deviceEntries()) {
+		if (!entry.isConnected()) continue;
+		entry.disconnect();
+		count++;
+	}
+	return count;
+}
+
+/**
+ * Forgets every known device - disconnects each one (if still connected)
+ * and unmounts its leaf. Takes no arguments, same reasoning as
+ * disconnect(); use `api.device.remove(host, port)` to forget just one.
+ * Async - this is the operation that does real api-tree surgery.
+ * @returns {Promise<number>} Number of devices removed
+ */
+export async function remove() {
+	if (arguments.length > 0) {
+		throw new Error("devices.remove() takes no arguments - it removes ALL devices. Use device.remove(host, port) for one.");
+	}
 	const entries = deviceEntries();
 	let count = 0;
 	for (const entry of entries) {
-		await entry.disconnect();
+		await entry.remove();
 		count++;
 	}
 	return count;
