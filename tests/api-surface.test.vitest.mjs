@@ -28,6 +28,7 @@ describe("index.mjs default export", () => {
 				"forward",
 				"install",
 				"log",
+				"pairing",
 				"reboot",
 				"reverse",
 				"shell",
@@ -96,6 +97,15 @@ describe("index.mjs default export", () => {
 		const droidsock = await createDroidSock();
 		try {
 			expect(typeof droidsock.install.classic).toBe("function");
+		} finally {
+			if (droidsock.shutdown) await droidsock.shutdown();
+		}
+	});
+
+	test("pairing module exposes pair", async () => {
+		const droidsock = await createDroidSock();
+		try {
+			expect(typeof droidsock.pairing.pair).toBe("function");
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}

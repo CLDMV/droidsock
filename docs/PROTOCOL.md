@@ -48,6 +48,16 @@ The reverse direction (device → host) needs one addition the forward direction
 
 Registering the tunnel itself is a normal client-initiated stream: `"reverse:forward:tcp:<devicePort>;tcp:<hostPort>"`, acked the same `OKAY` / `FAIL`-plus-message way every ADB host-service command-response is. Each subsequent device-initiated connection arrives via `handlePacket()`'s `remoteOpen` path with a destination of `"tcp:<hostPort>"`, which `reverse.mjs` matches against its own registration before opening a real local TCP connection and bridging bytes - a destination that doesn't match belongs to a different `reverse()` call's registration and is left alone. `close()` unregisters via `"reverse:killforward:tcp:<devicePort>"`, acked the same way. **Experimental** - built from the protocol spec, not yet validated against a real device. See [#1](https://github.com/CLDMV/droidsock/issues/1).
 
+## Wi-Fi Pairing
+
+The PIN-based pairing flow Android 11+ uses for wireless debugging (`adb pair host:port pairing-code`) is a **completely separate protocol** from everything above - no CNXN/AUTH framing, no shared connection state with the rest of droidsock beyond reusing the same persistent RSA identity `auth.getKeys()` manages. It exists to get that identity's public key written into the device's `adb_keys` trust store automatically (the same store a manual "Allow this computer?" tap on the classic flow populates), authenticated by the 6-digit code shown on the device instead of a user tap.
+
+The session itself is a raw TLS 1.3 connection from the first byte (both `minVersion`/`maxVersion` pinned to TLS 1.3), with peer certificate verification disabled - trust here comes from the shared pairing code via a SPAKE2 key exchange, not from the TLS certificate. That exchange runs over `PairingPacket` framing (a 6-byte header - version, type, big-endian payload length - followed by the payload) carrying two message types: a `SPAKE2_MSG` exchange, then an AES-128-GCM-encrypted `PEER_INFO` exchange once both sides have derived the shared session key. A successful decrypt of the device's `PEER_INFO` reply is what actually confirms pairing succeeded.
+
+The SPAKE2 construction itself is BoringSSL's bespoke SPAKE2-over-edwards25519 (**not** RFC 9382's NIST-curve SPAKE2) - built from `@noble/curves`'s Ed25519 primitives directly. Its password is channel-bound: the TLS session's exported keying material is appended to the pairing code before hashing, cryptographically tying the exchange to that specific TLS session so it can't be relayed between separately-terminated connections.
+
+**Experimental**, same as the rest of this document, but sourced unusually directly - every constant here (the curve, mask points, password-scalar derivation, key-derivation transcript order, the `PairingPacketHeader` layout including its version byte, the `PeerInfo` struct, and the AES-128-GCM cipher's key derivation and nonce construction) is confirmed against AOSP/BoringSSL source, cross-checked across multiple independent reads - see `pairing.mjs`'s own top-of-file comment. Not yet validated against a real device. See [#1](https://github.com/CLDMV/droidsock/issues/1).
+
 ---
 
 [← Back to README](../README.md)
