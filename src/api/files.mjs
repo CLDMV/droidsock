@@ -18,7 +18,16 @@
 import { self } from "@cldmv/slothlet/runtime";
 import { parseListing, quoteShellArg } from "./utils.mjs";
 import { readFile, writeFile, open } from "node:fs/promises";
-import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
+import { brotliCompress, brotliDecompress } from "node:zlib";
+import { promisify } from "node:util";
+
+// Promisified rather than the *Sync variants - brotli compression/decompression
+// of a 48-64KB chunk is real CPU work, and running it synchronously on the
+// main thread once per chunk would block the event loop (stalling unrelated
+// concurrent streams/timers) for the duration of a large multi-chunk
+// transfer. The async form offloads the work to libuv's threadpool.
+const brotliCompressAsync = promisify(brotliCompress);
+const brotliDecompressAsync = promisify(brotliDecompress);
 
 /**
  * Validates a POSIX file mode before it's interpolated (via `.toString(8)`)
@@ -520,7 +529,7 @@ export async function pushV2(___socket, streamManager, localPath, remotePath, op
 				const { bytesRead } = await fileHandle.read(buffer, 0, inputChunkMax, null);
 				if (bytesRead === 0) break;
 				const chunk = bytesRead === inputChunkMax ? buffer : buffer.subarray(0, bytesRead);
-				const wireChunk = flag === SYNC_FLAG_BROTLI ? brotliCompressSync(chunk) : chunk;
+				const wireChunk = flag === SYNC_FLAG_BROTLI ? await brotliCompressAsync(chunk) : chunk;
 				if (wireChunk.length > SYNC_DATA_MAX) {
 					throw new Error(`Compressed SYNC DATA chunk exceeds the protocol ceiling: ${wireChunk.length} bytes (max ${SYNC_DATA_MAX})`);
 				}
@@ -628,7 +637,7 @@ export async function pullV2(___socket, streamManager, remotePath, localPath, op
 			for (;;) {
 				const frame = await reader.next();
 				if (frame.id === SYNC_ID_DATA) {
-					const chunk = flag === SYNC_FLAG_BROTLI ? brotliDecompressSync(frame.payload) : frame.payload;
+					const chunk = flag === SYNC_FLAG_BROTLI ? await brotliDecompressAsync(frame.payload) : frame.payload;
 					await fileHandle.write(chunk);
 					bytesTransferred += frame.payload.length;
 					if (onProgress) onProgress({ bytesTransferred });
