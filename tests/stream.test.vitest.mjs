@@ -150,6 +150,19 @@ describe("stream.create", () => {
 		expect(ack.arg1).toBe(7);
 	});
 
+	test("strips a trailing NUL terminator from a device-initiated OPEN's destination before emitting remoteOpen", async () => {
+		const socket = createFakeSocket();
+		const manager = await droidsock.stream.create(socket);
+
+		const remoteOpen = new Promise((resolve) => manager.once("remoteOpen", (stream, destination) => resolve(destination)));
+		// ADB service strings are conventionally NUL-terminated on the wire -
+		// without stripping it, this would emit "tcp:9000\0" and fail strict
+		// destination matching in reverse.start() and any other consumer.
+		withContext(() => manager.handlePacket(buildPacket(MSG_OPEN, 7, 0, "tcp:9000\0")));
+
+		expect(await remoteOpen).toBe("tcp:9000");
+	});
+
 	test("two device-initiated OPENs in one handlePacket() call each get a distinct local id", async () => {
 		const socket = createFakeSocket();
 		const manager = await droidsock.stream.create(socket);

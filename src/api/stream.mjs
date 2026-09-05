@@ -133,7 +133,12 @@ export function create(socket) {
 					// through to normal per-stream routing below instead of being
 					// misclassified as a new stream.
 					const remoteId = arg0;
-					const destination = packetData.toString("utf8");
+					// ADB service strings are conventionally NUL-terminated on the
+					// wire (see connection.mjs's identical stripping of the CNXN
+					// payload) - left in place, "tcp:9000\0" would fail strict
+					// destination matching in reverse.start() and any other
+					// remoteOpen consumer expecting a plain "tcp:9000".
+					const destination = packetData.toString("utf8").replace(/\0/g, "");
 					const localId = nextStreamId++;
 					const stream = new AdbStream(localId, remoteId, socket, manager);
 					stream.ready = true; // already open from our side - no OKAY to wait on
