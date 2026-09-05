@@ -114,7 +114,7 @@ async function connectDevice() {
 	return { device, droidsock };
 }
 
-describe("devices leaf - assertReady() guards every method", () => {
+describe("device leaf - assertReady() guards every method", () => {
 	test("throws 'Device not connected' once the underlying socket is gone", async () => {
 		const { device } = await connectDevice();
 		device.connection.socket.destroy();
@@ -132,7 +132,7 @@ describe("devices leaf - assertReady() guards every method", () => {
 	});
 });
 
-describe("devices leaf - thin delegation to the composed protocol modules", () => {
+describe("device leaf - thin delegation to the composed protocol modules", () => {
 	test("push()/pull()/pushV2()/pullV2() delegate to files.* with (socket, streamManager, ...args)", async () => {
 		const { device, droidsock: instance } = await connectDevice();
 		const pushSpy = vi.spyOn(instance.files, "push").mockResolvedValue("push-ok");

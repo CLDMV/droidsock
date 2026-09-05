@@ -211,6 +211,9 @@ export function parseHostPort(hostPort, defaultPort = 5555) {
 			throw new Error(`Invalid host:port (unterminated '[': ${hostPort})`);
 		}
 		const host = str.slice(1, closeIdx);
+		if (!net.isIPv6(host)) {
+			throw new Error(`Invalid host:port (bracketed host is not a valid IPv6 address: ${hostPort})`);
+		}
 		const rest = str.slice(closeIdx + 1);
 		if (rest === "") {
 			return { host, port: defaultPort };

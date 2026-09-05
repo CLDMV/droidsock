@@ -237,6 +237,15 @@ describe("utils.parseHostPort", () => {
 		expect(() => parseHostPort("[::1]5555")).toThrow("expected ':' after ']'");
 	});
 
+	test("throws when the bracketed host is empty", () => {
+		expect(() => parseHostPort("[]:5555")).toThrow("bracketed host is not a valid IPv6 address");
+	});
+
+	test("throws when the bracketed host isn't a valid IPv6 literal", () => {
+		expect(() => parseHostPort("[not-ip]:5555")).toThrow("bracketed host is not a valid IPv6 address");
+		expect(() => parseHostPort("[10.6.0.108]:5555")).toThrow("bracketed host is not a valid IPv6 address");
+	});
+
 	test("throws on an invalid port after a bracketed host", () => {
 		expect(() => parseHostPort("[::1]:not-a-port")).toThrow("Invalid port");
 	});
