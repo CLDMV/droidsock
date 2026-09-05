@@ -759,6 +759,23 @@ describe("files.pushV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 		expect(Buffer.concat(dataFrames.map((f) => f.subarray(8))).equals(big)).toBe(true);
 		expect(onProgress).toHaveBeenLastCalledWith({ bytesTransferred: big.length, totalBytes: big.length });
 	});
+
+	test("rejects rather than hanging if the stream closes before OKAY/FAIL arrives", async () => {
+		const localFile = path.join(tmpDir, "push-v2-stall.txt");
+		writeFileSync(localFile, "data");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "DONE") {
+				// Device disconnects mid-transfer - no OKAY/FAIL ever arrives.
+				s.emit("close");
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.pushV2(fakeSocket, streamManager, localFile, "/sdcard/dest.txt")).rejects.toThrow(
+			"Sync stream ended before a terminal frame arrived"
+		);
+	});
 });
 
 describe("files.pullV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated against a real device)", () => {
@@ -851,6 +868,22 @@ describe("files.pullV2 (EXPERIMENTAL - ADB SYNC V2 protocol, not yet validated a
 		expect(readFileSync(localFile).equals(expected)).toBe(true);
 		expect(onProgress).toHaveBeenCalledTimes(5);
 		expect(onProgress).toHaveBeenLastCalledWith({ bytesTransferred: expected.length });
+	});
+
+	test("rejects rather than hanging if the stream closes before DONE/FAIL arrives", async () => {
+		const localFile = path.join(tmpDir, "pull-v2-stall.bin");
+
+		const stream = createFakeSyncStream((frame, s) => {
+			if (frame.subarray(0, 4).toString("ascii") === "RCV2" && frame.length === 8) {
+				// Device disconnects mid-transfer - no DONE/FAIL ever arrives.
+				s.emit("close");
+			}
+		});
+		const streamManager = { openStream: vi.fn().mockResolvedValue(stream) };
+
+		await expect(droidsock.files.pullV2(fakeSocket, streamManager, "/sdcard/source.bin", localFile)).rejects.toThrow(
+			"Sync stream ended before a terminal frame arrived"
+		);
 	});
 });
 

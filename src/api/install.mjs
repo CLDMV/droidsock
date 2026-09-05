@@ -99,7 +99,12 @@ export async function streaming(___socket, streamManager, localPath, options = {
 
 		const stream = await streamManager.openStream(destination);
 		try {
-			let output = Buffer.alloc(0);
+			// Collected and concatenated once at the end rather than
+			// Buffer.concat()'d on every "data" event - the latter reallocates
+			// and copies the entire output so far on each chunk, which is
+			// quadratic in the number of chunks for `pm install`'s (typically
+			// short, but unbounded) stdout.
+			const outputChunks = [];
 			// Set synchronously inside the "close"/"error" listeners themselves
 			// (not via a .then()/.catch() reaction on `closed`) - a device can
 			// close the stream normally mid-transfer, not just error it, and
@@ -110,7 +115,7 @@ export async function streaming(___socket, streamManager, localPath, options = {
 			let stopped = false;
 			const closed = new Promise((resolve, reject) => {
 				stream.on("data", (chunk) => {
-					output = Buffer.concat([output, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+					outputChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 				});
 				stream.once("close", () => {
 					stopped = true;
@@ -150,7 +155,7 @@ export async function streaming(___socket, streamManager, localPath, options = {
 			}
 
 			await closed;
-			return output.toString("utf8");
+			return Buffer.concat(outputChunks).toString("utf8");
 		} finally {
 			stream.close();
 		}

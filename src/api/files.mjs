@@ -132,6 +132,13 @@ function buildSyncFrame(id, valueOrPayload) {
  * Wraps an opened sync stream with a pull-based frame reader that buffers
  * incoming chunks and reassembles complete SYNC frames (id + value + payload)
  * regardless of how the underlying WRTE data happens to be chunked.
+ *
+ * If the stream closes or errors before a terminal frame (OKAY/DONE/FAIL)
+ * arrives (a real disconnect or protocol error), a pending/future next()
+ * rejects instead of waiting forever - same handling as
+ * createListFrameReader()/createRawByteReader(), which this reader had
+ * lacked (push()/pull()/pushV2()/pullV2() could otherwise hang indefinitely
+ * on a mid-transfer disconnect).
  * @param {Object} stream - An ADB stream already opened to "sync:".
  * @returns {{ next: () => Promise<{id: string, value: number, payload: Buffer}> }} Frame reader.
  */
@@ -139,6 +146,7 @@ function createSyncFrameReader(stream) {
 	let buffer = Buffer.alloc(0);
 	const pending = [];
 	let waiter = null;
+	let endError = null;
 
 	function drain() {
 		while (buffer.length >= 8) {
@@ -150,9 +158,19 @@ function createSyncFrameReader(stream) {
 			pending.push({ id, value, payload });
 		}
 		if (pending.length > 0 && waiter) {
-			const resolve = waiter;
+			const resolve = waiter.resolve;
 			waiter = null;
 			resolve();
+		}
+	}
+
+	function endWith(error) {
+		if (endError) return;
+		endError = error || new Error("Sync stream ended before a terminal frame arrived");
+		if (waiter) {
+			const reject = waiter.reject;
+			waiter = null;
+			reject(endError);
 		}
 	}
 
@@ -160,12 +178,15 @@ function createSyncFrameReader(stream) {
 		buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
 		drain();
 	});
+	stream.on("close", () => endWith());
+	stream.on("error", (error) => endWith(error));
 
 	return {
 		async next() {
 			while (pending.length === 0) {
-				await new Promise((resolve) => {
-					waiter = resolve;
+				if (endError) throw endError;
+				await new Promise((resolve, reject) => {
+					waiter = { resolve, reject };
 				});
 			}
 			return pending.shift();
