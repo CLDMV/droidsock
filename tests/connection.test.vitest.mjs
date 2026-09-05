@@ -260,6 +260,19 @@ describe("devices leaf convenience shell shortcuts - quote user-controlled argum
 			await device.launchApp("com.example.app`x`", "Main;Activity");
 			expect(executeSpy.mock.calls.at(-1)[2]).toBe("am start -n 'com.example.app`x`/Main;Activity'");
 
+			// The remaining fixed-command convenience shortcuts.
+			await device.pwd();
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("pwd");
+
+			await device.getModel();
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("getprop ro.product.model");
+
+			await device.getAndroidVersion();
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("getprop ro.build.version.release");
+
+			await device.getBattery();
+			expect(executeSpy.mock.calls.at(-1)[2]).toBe("dumpsys battery");
+
 			await device.disconnect();
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
