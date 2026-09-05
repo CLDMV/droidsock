@@ -481,39 +481,55 @@ export async function pair(host, port, pairingCode, options = {}) {
 
 	return new Promise((resolve, reject) => {
 		let settled = false;
+		// Declared (and implicitly initialized to undefined) before finish() is
+		// defined, rather than `const socket = tls.connect(...)` further down -
+		// if tls.connect() throws synchronously (e.g. an invalid port), the
+		// still-pending timer below would later call finish() while `socket`
+		// was never assigned; with `const`, that's a temporal-dead-zone
+		// ReferenceError inside a setTimeout callback Node can't attribute back
+		// to this promise. With `let` declared up front, finish() just sees
+		// `socket` as undefined and skips the cleanup that needs it.
+		let socket;
 		const finish = (fn, value) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			socket.removeAllListeners();
-			socket.destroy();
+			if (socket) {
+				socket.removeAllListeners();
+				socket.destroy();
+			}
 			fn(value);
 		};
 
 		const timer = setTimeout(() => finish(reject, new Error("Pairing timed out")), timeoutMs);
 
-		const socket = tls.connect({
-			host,
-			port,
-			cert,
-			key,
-			minVersion: "TLSv1.3",
-			maxVersion: "TLSv1.3",
-			// AOSP's pairing server presents an ephemeral, unpinned cert - trust
-			// here comes from the shared pairing code via SPAKE2, not from
-			// certificate validation (confirmed: pairing_connection.cpp sets a
-			// cert-verify callback that unconditionally accepts,
-			// `SetCertVerifyCallback([](X509_STORE_CTX*) { return 1; })`).
-			// Requiring a valid cert here would just make pairing itself
-			// impossible - a compliant device has nothing for this connection to
-			// validate against yet. CodeQL flags this as
-			// js/disabling-certificate-validation - a false positive against this
-			// protocol, per the above; dismiss via the alert itself (inline
-			// `codeql[...]` suppression comments aren't respected by GitHub's
-			// hosted Code Scanning flow - confirmed against GitHub's own docs,
-			// which document only UI/API dismissal as the real mechanism).
-			rejectUnauthorized: false
-		});
+		try {
+			socket = tls.connect({
+				host,
+				port,
+				cert,
+				key,
+				minVersion: "TLSv1.3",
+				maxVersion: "TLSv1.3",
+				// AOSP's pairing server presents an ephemeral, unpinned cert - trust
+				// here comes from the shared pairing code via SPAKE2, not from
+				// certificate validation (confirmed: pairing_connection.cpp sets a
+				// cert-verify callback that unconditionally accepts,
+				// `SetCertVerifyCallback([](X509_STORE_CTX*) { return 1; })`).
+				// Requiring a valid cert here would just make pairing itself
+				// impossible - a compliant device has nothing for this connection to
+				// validate against yet. CodeQL flags this as
+				// js/disabling-certificate-validation - a false positive against this
+				// protocol, per the above; dismiss via the alert itself (inline
+				// `codeql[...]` suppression comments aren't respected by GitHub's
+				// hosted Code Scanning flow - confirmed against GitHub's own docs,
+				// which document only UI/API dismissal as the real mechanism).
+				rejectUnauthorized: false
+			});
+		} catch (error) {
+			finish(reject, error);
+			return;
+		}
 
 		const reader = createPacketReader();
 		let stage = "spake2"; // "spake2" -> "peerInfo" -> done

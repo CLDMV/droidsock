@@ -330,4 +330,24 @@ describe("pairing.pair", () => {
 		// connect-timeout/ECONNREFUSED.
 		await expect(droidsock.pairing.pair("192.0.2.1", 5555, "123456", { keyDir: tmpKeyDir, timeoutMs: 300 })).rejects.toThrow(/timed out/);
 	});
+
+	test("rejects immediately (not via the timeout) when tls.connect() throws synchronously, and the pending timer doesn't crash later", async () => {
+		// node:tls validates the port synchronously before any I/O - an
+		// out-of-range port throws a RangeError from tls.connect() itself,
+		// before the "secureConnect"/"error" listeners even exist. This is the
+		// exact desync pair()'s fix addresses: `socket` must already be
+		// declared (as undefined) when the pending timer's finish() callback
+		// could run, or a later timer fire would throw a temporal-dead-zone
+		// ReferenceError instead of the intended "Pairing timed out".
+		const start = Date.now();
+		await expect(droidsock.pairing.pair("127.0.0.1", -1, "123456", { keyDir: tmpKeyDir, timeoutMs: 300 })).rejects.toThrow(/port/i);
+		expect(Date.now() - start).toBeLessThan(250);
+
+		// Confirms the rejection came from the synchronous throw, not from
+		// racing the timer - if the pre-fix TDZ bug were present, the timer
+		// scheduled before the throw would still fire ~300ms from start and
+		// crash the process with a ReferenceError when it tried to read
+		// `socket`. Waiting past that window proves it doesn't.
+		await new Promise((resolve) => setTimeout(resolve, 350));
+	});
 });
