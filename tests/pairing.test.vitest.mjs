@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
@@ -319,6 +319,27 @@ describe("pairing.pair", () => {
 
 			const certAfter = readFileSync(certPath, "utf8");
 			expect(certAfter).not.toBe(certBefore);
+		} finally {
+			rmSync(keyDir, { recursive: true, force: true });
+		}
+	});
+
+	test("regenerates the persisted cert instead of throwing when it's corrupted/invalid PEM on disk", async () => {
+		const keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-pairing-corrupt-cert-test-"));
+		try {
+			droidsock.auth.generateKeys(2048, keyDir);
+			// Simulate a truncated/corrupted persisted cert (e.g. a partial write
+			// or disk corruption) - not valid PEM, so crypto.X509Certificate()
+			// throws when certMatchesKey() tries to parse it.
+			const certPath = path.join(keyDir, "adbkey.cert.pem");
+			writeFileSync(certPath, "-----BEGIN CERTIFICATE-----\nnot actually a certificate\n");
+
+			server = await startFakePairingServer("123456");
+			await expect(droidsock.pairing.pair("127.0.0.1", server.port, "123456", { keyDir })).resolves.toEqual({ success: true });
+
+			// The corrupted cert was replaced with a freshly generated, valid one.
+			const certAfter = readFileSync(certPath, "utf8");
+			expect(() => new crypto.X509Certificate(certAfter)).not.toThrow();
 		} finally {
 			rmSync(keyDir, { recursive: true, force: true });
 		}

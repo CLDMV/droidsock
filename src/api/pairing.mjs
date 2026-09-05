@@ -423,13 +423,29 @@ async function getOrCreatePairingCert(keys, certPath) {
 	// A single read attempt rather than existsSync() + readFileSync() - the
 	// separate check-then-act let the file be created, removed, or replaced
 	// between the two calls (CodeQL js/file-system-race).
+	let cert;
 	try {
-		const cert = fs.readFileSync(certPath, "utf8");
-		if (certMatchesKey(cert, keys.publicKey)) {
-			return { cert, key: keys.privateKey };
-		}
+		cert = fs.readFileSync(certPath, "utf8");
 	} catch (error) {
 		if (error.code !== "ENOENT") throw error;
+	}
+
+	if (cert !== undefined) {
+		// certMatchesKey() throws (rather than returning false) if the
+		// persisted file isn't valid PEM/X.509 - e.g. truncated or corrupted
+		// on disk. Treat that the same as a stale/mismatched cert (fall
+		// through to regeneration below) instead of letting the parse error
+		// propagate and block pairing outright; only a real filesystem error
+		// on the read above is worth failing loudly for.
+		let matches = false;
+		try {
+			matches = certMatchesKey(cert, keys.publicKey);
+		} catch {
+			// Parse failure - fall through to regeneration below.
+		}
+		if (matches) {
+			return { cert, key: keys.privateKey };
+		}
 	}
 
 	const pems = await selfsigned.generate(null, {
