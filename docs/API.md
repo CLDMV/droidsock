@@ -16,7 +16,7 @@ Connects to a device and returns its live leaf. Calling `connect()` again for th
 
 - `list()`: Returns an array of the currently-connected device leaves.
 - `disconnect(host, port)`: Disconnects a specific device (default port `5555`). Returns `true` if a matching device was found, `false` otherwise. **Async** - `await` it.
-- `disconnectAll()`: Disconnects every currently-connected device. Returns the number disconnected. **Async** - `await` it.
+- `disconnectAll()`: Disconnects every known device leaf, including stale entries left over from an unexpected disconnect (not just the currently-connected ones `list()` returns). Returns the number disconnected. **Async** - `await` it.
 
 ## The device object (returned by connect())
 
