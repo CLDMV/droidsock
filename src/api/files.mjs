@@ -448,6 +448,27 @@ async function quitSyncStream(stream) {
 }
 
 /**
+ * Writes an entire buffer to a FileHandle, looping until every byte is
+ * written. FileHandle.write() is permitted to perform a partial write
+ * (bytesWritten < buffer.length) - a single unchecked call can silently
+ * truncate/corrupt the output file under backpressure or unusual filesystem
+ * conditions.
+ * @param {Object} fileHandle - An open fs/promises FileHandle.
+ * @param {Buffer} buffer - Bytes to write in full.
+ * @returns {Promise<void>}
+ */
+async function writeFully(fileHandle, buffer) {
+	let offset = 0;
+	while (offset < buffer.length) {
+		const { bytesWritten } = await fileHandle.write(buffer, offset, buffer.length - offset);
+		if (bytesWritten === 0) {
+			throw new Error("fileHandle.write() returned 0 bytes written - refusing to loop forever");
+		}
+		offset += bytesWritten;
+	}
+}
+
+/**
  * Pushes a file to the device via the ADB SYNC sub-protocol's SEND command.
  * EXPERIMENTAL - implemented from spec, not yet validated against a real
  * device. See #2.
@@ -669,7 +690,7 @@ export async function pullV2(___socket, streamManager, remotePath, localPath, op
 							throw decompressError;
 						}
 					}
-					await fileHandle.write(chunk);
+					await writeFully(fileHandle, chunk);
 					bytesTransferred += frame.payload.length;
 					if (onProgress) onProgress({ bytesTransferred });
 				} else if (frame.id === SYNC_ID_DONE) {
