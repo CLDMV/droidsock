@@ -18,38 +18,13 @@
 import { self } from "@cldmv/slothlet/runtime";
 import path from "node:path";
 import { open } from "node:fs/promises";
+import { assertValidFlags } from "./utils.mjs";
 
 // Chunk size for stdin writes on the exec:cmd stream. Not protocol-mandated -
 // ADB streams are otherwise unbounded per WRTE frame - but kept aligned with
 // the SYNC sub-protocol's own 64KB DATA ceiling (files.mjs) for consistency
 // and to stay safely under every known device max-payload negotiation.
 const EXEC_WRITE_CHUNK = 64 * 1024;
-
-/**
- * Validates flags before they're joined and interpolated into the
- * `exec:cmd package install ...` destination string. A non-array throws a
- * confusing TypeError from .join() with no context; a flag containing
- * whitespace would silently split into multiple argv tokens once joined and
- * re-parsed by the device shell, changing what's actually passed to `pm
- * install` from what the caller specified.
- * @param {*} flags - Value to validate.
- * @returns {Array<string>} The validated flags, unchanged.
- */
-function assertValidFlags(flags) {
-	if (!Array.isArray(flags) || !flags.every((flag) => typeof flag === "string" && flag.length > 0 && !/\s/.test(flag))) {
-		// JSON.stringify() throws on a circular value - fall back to String()
-		// (which can't throw for this) so the validation error itself is never
-		// masked by a formatting failure.
-		let described;
-		try {
-			described = JSON.stringify(flags);
-		} catch {
-			described = String(flags);
-		}
-		throw new Error(`Invalid flags: ${described} (must be an array of non-empty, whitespace-free strings)`);
-	}
-	return flags;
-}
 
 /**
  * Installs a local APK using the classic push-then-install flow: pushes the
