@@ -60,7 +60,7 @@ async function main() {
 		});
 
 		// Connect to device
-		const deviceConnection = await api.device.connect(device.host, device.port);
+		const deviceConnection = await api.devices.connect(device.host, device.port);
 
 		if (!deviceConnection.isConnected()) {
 			throw new Error("Failed to connect to device");
@@ -150,7 +150,7 @@ async function main() {
 		await delay(1000);
 
 		// Clean up
-		deviceConnection.disconnect();
+		await deviceConnection.disconnect();
 		console.log("\n✅ Disconnected from device");
 
 		// Shutdown slothlet

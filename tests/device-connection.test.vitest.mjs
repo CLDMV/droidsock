@@ -47,7 +47,7 @@ describe.skipIf(!deviceHost)("live device connection", () => {
 			const result = await device.shell("echo droidsock-test-ok");
 			expect(result.trim()).toBe("droidsock-test-ok");
 
-			device.disconnect();
+			await device.disconnect();
 			expect(device.isConnected()).toBe(false);
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
@@ -60,7 +60,7 @@ describe.skipIf(!deviceHost)("live device connection", () => {
 			const first = await droidsock.device.connect(deviceHost, devicePort);
 			const second = await droidsock.device.connect(deviceHost, devicePort);
 			expect(second).toBe(first);
-			first.disconnect();
+			await first.disconnect();
 		} finally {
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
@@ -73,7 +73,7 @@ describe.skipIf(!deviceHost)("live device connection", () => {
 		try {
 			expect(device.isConnected()).toBe(true);
 		} finally {
-			device.disconnect();
+			await device.disconnect();
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
 	});
