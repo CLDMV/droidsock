@@ -33,11 +33,12 @@ A complete, from-scratch implementation of the Android Debug Bridge (ADB) protoc
 - **Hardening** - closed a shell-injection gap in `devices.mjs`'s and `shell.mjs`'s convenience shortcuts, capped several unbounded device-controlled memory allocations in the SYNC V2 paths, and fixed a handful of mid-transfer disconnect/failure edge cases.
 - [View full v2.0.0 Changelog](./docs/changelog/v2/v2.0.0.md)
 
-### Previous: v1.2.0 (September 2026)
+### Recent Releases
 
-- **Device discovery** - `discover.subnet()` sweeps a CIDR range for a reachable ADB TCP port; `discover.mdns()` is a hand-written mDNS client (no dependency) for wireless-debugging-advertised devices. Both **experimental** - see [#1](https://github.com/CLDMV/droidsock/issues/1).
-- **Shell-injection fix** - every `files.*` shell-based method now single-quote-escapes remote paths before interpolation; `mkdir`/`chmod`'s mode and `find`'s `maxDepth`/`type` are validated too.
-- [View full v1.2.0 Changelog](./docs/changelog/v1/v1.2.0.md)
+- **v1.2.0** (September 2026) - Device discovery (`discover.subnet()` CIDR sweep, `discover.mdns()` for wireless-debugging-advertised devices, both experimental) and a shell-injection fix across every `files.*` shell-based method ([Changelog](./docs/changelog/v1/v1.2.0.md))
+- **v1.1.1** (September 2026) - Documentation formatting fix (padded slashes between adjacent code spans) - no code changes ([PR #16](https://github.com/CLDMV/droidsock/pull/16))
+- **v1.1.0** (September 2026) - Fixed the `list()`/`stat()` regression from v1.0.0, and added a binary-safe SYNC-based `list()` with shell fallback, real ADB `reboot:` support, TCP port forwarding, and local APK install ([Changelog](./docs/changelog/v1/v1.1.0.md))
+- **v1.0.0** (September 2026) - First tagged release - a callable quick-path default export (dropping `connect()`/`listDevices()`), a real test suite with measured coverage, and a full CI/release pipeline ([Changelog](./docs/changelog/v1/v1.0.0.md))
 
 📚 **For complete version history and detailed release notes, see [docs/changelog/](./docs/changelog/) folder.**
 
