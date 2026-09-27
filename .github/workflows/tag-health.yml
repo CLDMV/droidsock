@@ -4,11 +4,22 @@
 # @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
 #
 
+# Individual repo: .github/workflows/tag-health.yml
+#
+# Wakes the reusable-tag-health.yml workflow on a weekly schedule. The
+# reusable already implements validation, bot-signature fixes, unsigned-tag
+# fixes, orphaned-release recovery, orphaned-tag relocation, and rolling
+# major/minor tag maintenance — but it's dormant by default. This template
+# is what triggers it.
+#
+# Batch 3.1 from tmp/plan-future-workflows.md.
 name: 🏥 Tag Health
 
 on:
     schedule:
-        - cron: "4 4 * * 0" # weekly Sunday 04:04 UTC
+        # Weekly Sunday 04:04 UTC. Off-the-hour to dodge the GitHub :00-cron
+        # stampede; weekly cadence because tag drift accumulates slowly.
+        - cron: "4 4 * * 0"
     workflow_dispatch:
         inputs:
             debug:
@@ -28,13 +39,18 @@ on:
                 default: true
 
 permissions:
-    contents: write
+    contents: read
 
 jobs:
     health:
+        permissions:
+            contents: write
         uses: CLDMV/.github/.github/workflows/reusable-tag-health.yml@v4
         with:
             debug: ${{ github.event.inputs.debug == 'true' }}
+            # Full unified sweep: validates, fixes bot signatures, fixes
+            # unsigned tags, recovers orphaned releases, relocates orphaned
+            # tags, and updates rolling major/minor refs.
             run_unified_tag_health: true
             create_documentation: ${{ github.event.inputs.create_documentation == 'true' }}
             use_gpg: ${{ github.event.inputs.use_gpg != 'false' }}

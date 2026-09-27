@@ -4,11 +4,17 @@
 # @Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
 #
 
+# Individual repo: .github/workflows/welcome.yml
+#
+# Batch 5.3 from tmp/plan-future-workflows.md.
 name: 👋 Welcome Contributor
 
 # SECURITY NOTE: pull_request_target runs in the BASE repo's context with
-# WRITE permissions. SAFE — no checkout of PR head, no PR-supplied code
-# execution, REST-API-only (read prior interactions, post a comment).
+# WRITE permissions and access to secrets. SAFE for THIS workflow because:
+#   - We never checkout the PR head ref
+#   - We never run code from the PR (no `run:` step uses PR data)
+#   - We only call REST APIs to read prior interactions and post a comment
+# DO NOT add a checkout step or any step that executes PR-supplied content.
 on:
     issues:
         types: [opened]
@@ -22,6 +28,8 @@ permissions:
 jobs:
     welcome:
         uses: CLDMV/.github/.github/workflows/reusable-welcome.yml@v4
+        # Optional. Without these, the welcome comment is posted by
+        # github-actions[bot]. With these, it's posted by your CLDMV bot App.
         secrets:
             BOT_APP_CLIENT_ID: ${{ secrets.CLDMV_BOT_APP_CLIENT_ID }}
             BOT_APP_PRIVATE_KEY: ${{ secrets.CLDMV_BOT_APP_PRIVATE_KEY }}
