@@ -35,10 +35,8 @@ jobs:
         uses: CLDMV/.github/.github/workflows/reusable-bundle-size.yml@v4
         with:
             build_command: "npm run build:ci"
-            # Published files (package.json `files`). Top-level files carry a leading `*`
-            # because the bundle-size action only walks directories: a bare file path
-            # such as `index.mjs` is silently skipped, while `*index.mjs` is matched.
-            dist_paths: "*index.mjs,*index.cjs,*devcheck.mjs,dist/**,types/index.d.mts*,types/devcheck*.mts,types/dist/**"
+            # Every glob starts with `*`: the v4.29.2 measure action walks each path prefix separately (a bare top-level file matches nothing, and mixing `*` globs with directory globs counts files twice). CLDMV/.github#326/#327 fix this upstream.
+            dist_paths: "*index.mjs,*index.cjs,*devcheck.mjs,*dist/**,*types/index.d.mts*,*types/devcheck*.mts,*types/dist/**"
             # warning_pct: 5
             # warning_bytes: 500
             # comment_mode: "update"
