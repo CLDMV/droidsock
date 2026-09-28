@@ -51,10 +51,14 @@ function buildPacket(command, arg0, arg1, data) {
  * separate AUTH packets back-to-back without waiting in between - only one
  * needs a reply to complete connection.mjs's handshake). Doesn't validate
  * the signature at all - this only exercises the outgoing CNXN payload, not
- * real authentication.
+ * real authentication. When `features` is given, the handshake is completed with a CNXN banner
+ * advertising them instead of OKAY - the way a real device answers a successful AUTH, and the
+ * only place connection.mjs sets connection.deviceFeatures from.
+ * @param {Object} [options={}] - Options.
+ * @param {string[]} [options.features] - Features to advertise in a CNXN reply instead of OKAY.
  * @returns {Promise<{port: number, server: net.Server, getCapturedCnxnPayload: () => string|null}>} The listening fake server.
  */
-function createFakeAdbServer() {
+function createFakeAdbServer({ features } = {}) {
 	return new Promise((resolve) => {
 		let capturedCnxnPayload = null;
 		const server = net.createServer((socket) => {
@@ -77,7 +81,11 @@ function createFakeAdbServer() {
 						socket.write(buildPacket(MSG_AUTH, 1, 0, Buffer.alloc(20, 0x01)));
 					} else if (command === MSG_AUTH && !awaitingReply) {
 						awaitingReply = true;
-						socket.write(buildPacket(MSG_OKAY, 0, 0, Buffer.alloc(0)));
+						socket.write(
+							features
+								? buildPacket(MSG_CNXN, 0x01000001, 256 * 1024, Buffer.from(`device::features=${features.join(",")}`))
+								: buildPacket(MSG_OKAY, 0, 0, Buffer.alloc(0))
+						);
 					}
 				}
 			});
@@ -173,17 +181,20 @@ describe("devices leaf install() - streaming-then-classic fallback error handlin
 	});
 
 	test("surfaces both failures when the streaming attempt fails and the classic fallback also fails", async () => {
-		fakeServer = await createFakeAdbServer();
+		// The fake device advertises "cmd" in its handshake, so install() takes
+		// the streaming path first. (Writing device.connection.deviceFeatures by
+		// hand no longer reaches the leaf's own connection: that property is a
+		// slothlet live-view mirror, and an object assigned through it stays on
+		// the view.)
+		fakeServer = await createFakeAdbServer({ features: ["cmd"] });
 		keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-connection-test-"));
 
 		const droidsock = await createDroidSock();
+		let device;
 		try {
-			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
-			// Force the streaming attempt by hand - the fake server's minimal
-			// handshake doesn't advertise "cmd" for real.
-			device.connection.deviceFeatures = ["cmd"];
+			device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 
-			vi.spyOn(droidsock.install, "streaming").mockRejectedValue(new Error("device disconnected mid-transfer"));
+			const streamingSpy = vi.spyOn(droidsock.install, "streaming").mockRejectedValue(new Error("device disconnected mid-transfer"));
 			vi.spyOn(droidsock.install, "classic").mockRejectedValue(new Error("push failed: permission denied"));
 
 			// Previously the streaming error was silently discarded (bare
@@ -192,29 +203,34 @@ describe("devices leaf install() - streaming-then-classic fallback error handlin
 			await expect(device.install("/local/app.apk")).rejects.toThrow(
 				"Streaming install failed (device disconnected mid-transfer), and the classic fallback also failed: push failed: permission denied"
 			);
-
-			await device.disconnect();
+			expect(streamingSpy).toHaveBeenCalledTimes(1);
 		} finally {
+			// Disconnect in finally, not after the assertions: a failed assertion
+			// would otherwise leave this connection open, and the afterEach
+			// hook's server.close() waits for every connection to end.
+			if (device) device.disconnect();
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
 	});
 
 	test("falls back to classic silently when it succeeds, discarding the streaming error as intended", async () => {
-		fakeServer = await createFakeAdbServer();
+		fakeServer = await createFakeAdbServer({ features: ["cmd"] });
 		keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-connection-test-"));
 
 		const droidsock = await createDroidSock();
+		let device;
 		try {
-			const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
-			device.connection.deviceFeatures = ["cmd"];
+			device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
 
-			vi.spyOn(droidsock.install, "streaming").mockRejectedValue(new Error("cmd package install not supported"));
-			vi.spyOn(droidsock.install, "classic").mockResolvedValue("Success\n");
+			const streamingSpy = vi.spyOn(droidsock.install, "streaming").mockRejectedValue(new Error("cmd package install not supported"));
+			const classicSpy = vi.spyOn(droidsock.install, "classic").mockResolvedValue("Success\n");
 
 			await expect(device.install("/local/app.apk")).resolves.toBe("Success\n");
-
-			await device.disconnect();
+			// Both paths ran: the streaming attempt failed and classic recovered.
+			expect(streamingSpy).toHaveBeenCalledTimes(1);
+			expect(classicSpy).toHaveBeenCalledTimes(1);
 		} finally {
+			if (device) device.disconnect();
 			if (droidsock.shutdown) await droidsock.shutdown();
 		}
 	});
