@@ -1,0 +1,4 @@
+{
+	"extends": "@cldmv/configs/fix-headers.json",
+	"excludeFolders": ["types", "references"]
+}

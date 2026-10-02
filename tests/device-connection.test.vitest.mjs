@@ -1,14 +1,16 @@
 /**
+ *
  *	@Project: @cldmv/droidsock
  *	@Filename: /tests/device-connection.test.vitest.mjs
- *	@Date: 2026-08-30 16:00:52 -07:00 (1788130852)
- *	@Author: Shinrai <CLDMV>
+ *	@Date: 2026-08-30T16:00:52-07:00 (1788130852)
+ *	@Author: Nate Corcoran <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
- *	@Last modified by: Shinrai <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-08-30 16:02:20 -07:00 (1788130940)
+ *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-10-02T15:29:46-07:00 (1790980186)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+ *
  */
 
 import { describe, test, expect } from "vitest";
