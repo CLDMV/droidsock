@@ -11,6 +11,7 @@
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  */
 
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -28,6 +29,9 @@ export default defineConfig({
 		include: ["tests/**/*.test.vitest.mjs"],
 		exclude: ["node_modules"],
 		environment: "node",
+		// Pays the one-time cold cost of composing a droidsock instance before each file is
+		// collected, outside any timed hook - see the file's own doc comment.
+		setupFiles: [fileURLToPath(new URL("../tests/setup/warm-droidsock.mjs", import.meta.url))],
 		testTimeout: 30000,
 		reporters: ["dot"],
 		server: {
