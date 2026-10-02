@@ -46,11 +46,15 @@ function buildPacket(command, arg0, arg1, data) {
 
 /**
  * A minimal fake ADB server - see connection.test.vitest.mjs for the full rationale. Captures
- * the client's CNXN, replies AUTH(TOKEN), then OKAY on the client's first AUTH reply, completing
- * the handshake without validating the signature at all.
+ * the client's CNXN, replies AUTH(TOKEN), then completes the handshake on the client's first AUTH
+ * reply without validating the signature at all: with OKAY by default, or - when `features` is
+ * given - with a CNXN banner advertising them, the way a real device answers a successful AUTH
+ * (connection.mjs parses `features=` out of that banner into connection.deviceFeatures).
+ * @param {Object} [options={}] - Options.
+ * @param {string[]} [options.features] - Features to advertise in a CNXN reply instead of OKAY.
  * @returns {Promise<{port: number, server: net.Server}>} The listening fake server.
  */
-function createFakeAdbServer() {
+function createFakeAdbServer({ features } = {}) {
 	return new Promise((resolve) => {
 		const server = net.createServer((socket) => {
 			let buffer = Buffer.alloc(0);
@@ -67,7 +71,11 @@ function createFakeAdbServer() {
 						socket.write(buildPacket(MSG_AUTH, 1, 0, Buffer.alloc(20, 0x01)));
 					} else if (command === MSG_AUTH && !awaitingReply) {
 						awaitingReply = true;
-						socket.write(buildPacket(MSG_OKAY, 0, 0, Buffer.alloc(0)));
+						socket.write(
+							features
+								? buildPacket(MSG_CNXN, 0x01000001, 256 * 1024, Buffer.from(`device::features=${features.join(",")}`))
+								: buildPacket(MSG_OKAY, 0, 0, Buffer.alloc(0))
+						);
 					}
 				}
 			});
@@ -102,16 +110,31 @@ afterEach(async () => {
 });
 
 /**
- * Connects a fresh droidsock instance to a fresh fake ADB server, returning both the device
- * leaf and the droidsock instance so tests can spy on its composed modules.
- * @returns {Promise<{device: Object, droidsock: Object}>} The connected leaf and its instance.
+ * Connects a fresh droidsock instance to a fresh fake ADB server, returning the device leaf, the
+ * droidsock instance (so tests can spy on its composed modules), and the device's real session -
+ * the socket and stream manager connection.create()/stream.create() actually returned, which is
+ * what the leaf passes to every protocol module. `device.connection.socket`/`device.streamManager`
+ * can't stand in for those: they're read back through slothlet's wrap-on-set mirror
+ * (self.devices[key].connection = ...), which since slothlet 3.15.3 hands back a live Proxy view
+ * of each object rather than the object itself, so they are never the same reference.
+ * @param {Object} [options={}] - Options.
+ * @param {string[]} [options.features] - Features the fake device advertises during the handshake.
+ * @returns {Promise<{device: Object, droidsock: Object, session: {socket: Object, streamManager: Object}}>} The connected leaf, its instance, and its real session.
  */
-async function connectDevice() {
-	fakeServer = await createFakeAdbServer();
+async function connectDevice({ features } = {}) {
+	fakeServer = await createFakeAdbServer({ features });
 	keyDir = mkdtempSync(path.join(tmpdir(), "droidsock-device-test-"));
 	droidsock = await createDroidSock();
+	const connectionCreateSpy = vi.spyOn(droidsock.connection, "create");
+	const streamCreateSpy = vi.spyOn(droidsock.stream, "create");
 	const device = await droidsock.device.connect("127.0.0.1", fakeServer.port, { keyDir });
-	return { device, droidsock };
+	const session = {
+		socket: (await connectionCreateSpy.mock.results[0].value).socket,
+		streamManager: await streamCreateSpy.mock.results[0].value
+	};
+	connectionCreateSpy.mockRestore();
+	streamCreateSpy.mockRestore();
+	return { device, droidsock, session };
 }
 
 describe("device leaf - assertReady() guards every method", () => {
@@ -134,125 +157,124 @@ describe("device leaf - assertReady() guards every method", () => {
 
 describe("device leaf - thin delegation to the composed protocol modules", () => {
 	test("push()/pull()/pushV2()/pullV2() delegate to files.* with (socket, streamManager, ...args)", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const pushSpy = vi.spyOn(instance.files, "push").mockResolvedValue("push-ok");
 		const pullSpy = vi.spyOn(instance.files, "pull").mockResolvedValue("pull-ok");
 		const pushV2Spy = vi.spyOn(instance.files, "pushV2").mockResolvedValue("pushV2-ok");
 		const pullV2Spy = vi.spyOn(instance.files, "pullV2").mockResolvedValue("pullV2-ok");
 
 		await expect(device.push("/local", "/remote", { onProgress: null })).resolves.toBe("push-ok");
-		expect(pushSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/local", "/remote", { onProgress: null });
+		expect(pushSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "/local", "/remote", { onProgress: null });
 
 		await expect(device.pull("/remote", "/local", { compression: "brotli" })).resolves.toBe("pull-ok");
-		expect(pullSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/remote", "/local", { compression: "brotli" });
+		expect(pullSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "/remote", "/local", { compression: "brotli" });
 
 		await expect(device.pushV2("/local", "/remote")).resolves.toBe("pushV2-ok");
-		expect(pushV2Spy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/local", "/remote", {});
+		expect(pushV2Spy).toHaveBeenCalledWith(session.socket, session.streamManager, "/local", "/remote", {});
 
 		await expect(device.pullV2("/remote", "/local")).resolves.toBe("pullV2-ok");
-		expect(pullV2Spy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/remote", "/local", {});
+		expect(pullV2Spy).toHaveBeenCalledWith(session.socket, session.streamManager, "/remote", "/local", {});
 	});
 
 	test("list()/stat()/listV2()/statV2() delegate to files.* with (socket, streamManager, remotePath)", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const listSpy = vi.spyOn(instance.files, "list").mockResolvedValue(["a"]);
 		const statSpy = vi.spyOn(instance.files, "stat").mockResolvedValue("stat-ok");
 		const listV2Spy = vi.spyOn(instance.files, "listV2").mockResolvedValue(["b"]);
 		const statV2Spy = vi.spyOn(instance.files, "statV2").mockResolvedValue("statV2-ok");
 
 		await expect(device.list("/sdcard")).resolves.toEqual(["a"]);
-		expect(listSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/sdcard");
+		expect(listSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "/sdcard");
 
 		await expect(device.stat("/sdcard/f")).resolves.toBe("stat-ok");
-		expect(statSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/sdcard/f");
+		expect(statSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "/sdcard/f");
 
 		await expect(device.listV2("/sdcard")).resolves.toEqual(["b"]);
-		expect(listV2Spy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/sdcard");
+		expect(listV2Spy).toHaveBeenCalledWith(session.socket, session.streamManager, "/sdcard");
 
 		await expect(device.statV2("/sdcard/f")).resolves.toBe("statV2-ok");
-		expect(statV2Spy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/sdcard/f");
+		expect(statV2Spy).toHaveBeenCalledWith(session.socket, session.streamManager, "/sdcard/f");
 	});
 
 	test("reboot() delegates to reboot.execute with (socket, streamManager, mode)", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const rebootSpy = vi.spyOn(instance.reboot, "execute").mockResolvedValue(undefined);
 
 		await device.reboot("recovery");
-		expect(rebootSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "recovery");
+		expect(rebootSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "recovery");
 	});
 
 	test("rebootBootloader()/rebootRecovery()/rebootSideload() call reboot() with the right fixed mode", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const rebootSpy = vi.spyOn(instance.reboot, "execute").mockResolvedValue(undefined);
 
 		await device.rebootBootloader();
-		expect(rebootSpy).toHaveBeenLastCalledWith(device.connection.socket, device.streamManager, "bootloader");
+		expect(rebootSpy).toHaveBeenLastCalledWith(session.socket, session.streamManager, "bootloader");
 
 		await device.rebootRecovery();
-		expect(rebootSpy).toHaveBeenLastCalledWith(device.connection.socket, device.streamManager, "recovery");
+		expect(rebootSpy).toHaveBeenLastCalledWith(session.socket, session.streamManager, "recovery");
 
 		await device.rebootSideload();
-		expect(rebootSpy).toHaveBeenLastCalledWith(device.connection.socket, device.streamManager, "sideload");
+		expect(rebootSpy).toHaveBeenLastCalledWith(session.socket, session.streamManager, "sideload");
 	});
 
 	test("forward()/reverse() delegate to forward.start/reverse.start with (socket, streamManager, ...args)", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const forwardSpy = vi.spyOn(instance.forward, "start").mockResolvedValue({ localPort: 9000, close: () => {} });
 		const reverseSpy = vi.spyOn(instance.reverse, "start").mockResolvedValue({ close: () => {} });
 
 		await device.forward(5555, { localPort: 9000 });
-		expect(forwardSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, 5555, { localPort: 9000 });
+		expect(forwardSpy).toHaveBeenCalledWith(session.socket, session.streamManager, 5555, { localPort: 9000 });
 
 		await device.reverse(6000, 7000);
-		expect(reverseSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, 6000, 7000, {});
+		expect(reverseSpy).toHaveBeenCalledWith(session.socket, session.streamManager, 6000, 7000, {});
 	});
 
 	test("startStreamingShell()/startInteractiveShell() delegate to shell.startStreaming/startInteractive", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const control = { stop: () => {} };
 		const streamingSpy = vi.spyOn(instance.shell, "startStreaming").mockReturnValue(control);
 		const interactiveSpy = vi.spyOn(instance.shell, "startInteractive").mockReturnValue(control);
 
 		expect(device.startStreamingShell("logcat", { onData: null })).toBe(control);
-		expect(streamingSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "logcat", { onData: null });
+		expect(streamingSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "logcat", { onData: null });
 
 		expect(device.startInteractiveShell("sh")).toBe(control);
-		expect(interactiveSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "sh", {});
+		expect(interactiveSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "sh", {});
 	});
 
 	test("logcat()/top() convenience shortcuts delegate to startStreamingShell with the right fixed command", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const control = { stop: () => {} };
 		const streamingSpy = vi.spyOn(instance.shell, "startStreaming").mockReturnValue(control);
 
 		expect(device.logcat()).toBe(control);
-		expect(streamingSpy).toHaveBeenLastCalledWith(device.connection.socket, device.streamManager, "logcat", {});
+		expect(streamingSpy).toHaveBeenLastCalledWith(session.socket, session.streamManager, "logcat", {});
 
 		expect(device.top()).toBe(control);
-		expect(streamingSpy).toHaveBeenLastCalledWith(device.connection.socket, device.streamManager, "top -m 10", {});
+		expect(streamingSpy).toHaveBeenLastCalledWith(session.socket, session.streamManager, "top -m 10", {});
 	});
 
 	test("shell() passes the device's own advertised features through to shell.execute", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice({ features: ["shell_v2"] });
 		const executeSpy = vi.spyOn(instance.shell, "execute").mockResolvedValue("output");
-		device.connection.deviceFeatures = ["shell_v2"];
 
 		await expect(device.shell("ls", { timeout: 500 })).resolves.toBe("output");
-		expect(executeSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "ls", {
+		expect(executeSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "ls", {
 			timeout: 500,
 			deviceFeatures: ["shell_v2"]
 		});
 	});
 
 	test("install() goes straight to the classic flow when the device doesn't advertise the cmd feature", async () => {
-		const { device, droidsock: instance } = await connectDevice();
+		const { device, droidsock: instance, session } = await connectDevice();
 		const streamingSpy = vi.spyOn(instance.install, "streaming");
 		const classicSpy = vi.spyOn(instance.install, "classic").mockResolvedValue("Success\n");
 		// deviceFeatures deliberately left without "cmd" - the fake handshake doesn't advertise it.
 
 		await expect(device.install("/local/app.apk")).resolves.toBe("Success\n");
 		expect(streamingSpy).not.toHaveBeenCalled();
-		expect(classicSpy).toHaveBeenCalledWith(device.connection.socket, device.streamManager, "/local/app.apk", {});
+		expect(classicSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "/local/app.apk", {});
 	});
 });
 
