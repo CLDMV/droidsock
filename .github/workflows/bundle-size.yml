@@ -40,7 +40,7 @@ jobs:
         with:
             build_command: "npm run build:ci"
             # Every glob starts with `*`: the v4.29.2 measure action walks each path prefix separately (a bare top-level file matches nothing, and mixing `*` globs with directory globs counts files twice). CLDMV/.github#326/#327 fix this upstream.
-            dist_paths: "*index.mjs,*index.cjs,*devcheck.mjs,*dist/**,*types/index.d.mts*,*types/devcheck*.mts,*types/dist/**"
+            dist_paths: "*index.mjs,*index.cjs,*dist/**,*types/index.d.mts*,*types/dist/**"
             # warning_pct: 5
             # warning_bytes: 500
             # comment_mode: "update"
