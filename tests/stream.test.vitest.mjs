@@ -1,14 +1,16 @@
 /**
+ *
  *	@Project: @cldmv/droidsock
  *	@Filename: /tests/stream.test.vitest.mjs
- *	@Date: 2026-09-03 12:00:00 -07:00 (1788375600)
- *	@Author: Shinrai <CLDMV>
+ *	@Date: 2026-09-03T12:00:00-07:00 (1788462000)
+ *	@Author: Nate Corcoran <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
- *	@Last modified by: Shinrai <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-09-03 12:00:00 -07:00 (1788375600)
+ *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
+ *	@Last modified time: 2026-10-02T15:29:47-07:00 (1790980187)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
+ *
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
