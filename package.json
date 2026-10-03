@@ -1,6 +1,6 @@
 {
 	"name": "@cldmv/droidsock",
-	"version": "2.0.1",
+	"version": "2.0.2",
 	"description": "Complete Node.js implementation of the Android Debug Bridge (ADB) protocol",
 	"main": "./index.cjs",
 	"module": "./index.mjs",
@@ -41,7 +41,7 @@
 		"lint:fix": "eslint --config .configs/eslint.config.mjs . --fix",
 		"format": "prettier --config .configs/.prettierrc --write .",
 		"format:check": "prettier --config .configs/.prettierrc --check .",
-		"fix:headers": "node tools/fix-headers.mjs",
+		"fix:headers": "fix-headers --config .configs/fix-headers.json",
 		"prepare": "node -e \"import('./.githooks/install.mjs').catch(()=>{})\"",
 		"precommit:local": "npm run test:types",
 		"precommit": "npm run build && npm run build:types && npm run test:types && npm run lint && npm run format:check && npm run test"
@@ -105,8 +105,9 @@
 	],
 	"sideEffects": false,
 	"devDependencies": {
+		"@cldmv/configs": "^1.2.1",
 		"@cldmv/eslint-plugin-jsonv": "^1.0.3",
-		"@cldmv/fix-headers": "^1.3.10",
+		"@cldmv/fix-headers": "^2.1.2",
 		"@cldmv/jsonv": "^1.0.2",
 		"@cldmv/prettier-plugin-jsonv": "^1.0.1",
 		"@cldmv/vitest-runner": "^1.2.0",
