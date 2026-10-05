@@ -1,6 +1,6 @@
 {
 	"name": "@cldmv/droidsock",
-	"version": "2.0.2",
+	"version": "2.0.3",
 	"description": "Complete Node.js implementation of the Android Debug Bridge (ADB) protocol",
 	"main": "./index.cjs",
 	"module": "./index.mjs",
@@ -10,10 +10,6 @@
 			"types": "./types/index.d.mts",
 			"import": "./index.mjs",
 			"require": "./index.cjs"
-		},
-		"./devcheck": {
-			"types": "./types/devcheck.d.mts",
-			"import": "./devcheck.mjs"
 		},
 		"./main": {
 			"droidsock-dev": {
@@ -32,10 +28,11 @@
 		"build": "node build.mjs",
 		"build:types": "tsc --project .configs/tsconfig.dts.jsonc",
 		"build:ci": "npm run build && npm run build:types && npm run test:types",
-		"test": "node tests/run-vitest.mjs",
+		"test": "node tests/run-vitest.mjs && npm run test:cjs",
+		"test:cjs": "CI=1 node --test tests/cjs/entry.test.cjs",
 		"test:watch": "vitest --config .configs/vitest.config.mjs",
 		"test:types": "tsc --noEmit --project .configs/tsconfig.dts.jsonc",
-		"coverage": "node tests/run-vitest.mjs --coverage-quiet",
+		"coverage": "node tests/run-vitest.mjs --coverage-quiet && npm run test:cjs",
 		"ci:coverage": "npm run coverage",
 		"lint": "eslint --config .configs/eslint.config.mjs .",
 		"lint:fix": "eslint --config .configs/eslint.config.mjs . --fix",
@@ -94,20 +91,18 @@
 	"files": [
 		"index.mjs",
 		"index.cjs",
-		"devcheck.mjs",
 		"README.md",
 		"LICENSE",
 		"types/dist/",
 		"types/index.d.mts",
 		"types/index.d.mts.map",
-		"types/devcheck.d.mts",
 		"dist/"
 	],
 	"sideEffects": false,
 	"devDependencies": {
-		"@cldmv/configs": "^1.2.1",
+		"@cldmv/configs": "^1.2.4",
 		"@cldmv/eslint-plugin-jsonv": "^1.0.3",
-		"@cldmv/fix-headers": "^2.1.2",
+		"@cldmv/fix-headers": "^2.2.0",
 		"@cldmv/jsonv": "^1.0.2",
 		"@cldmv/prettier-plugin-jsonv": "^1.0.1",
 		"@cldmv/vitest-runner": "^1.2.0",
