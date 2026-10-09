@@ -307,3 +307,52 @@ describe("device keepalive", () => {
 		expect(spy).not.toHaveBeenCalled();
 	});
 });
+
+describe("device heartbeat", () => {
+	const beat = { interval: 20, timeout: 50 };
+
+	test("a healthy device is probed repeatedly and stays connected", async () => {
+		const { device, events } = await setup({ connect: { heartbeat: beat } });
+		const spy = vi.spyOn(droidsock.shell, "execute").mockResolvedValue("\n");
+		await vi.waitUntil(() => spy.mock.calls.length >= 3);
+		expect(spy.mock.calls[0][2]).toBe("echo");
+		expect(spy.mock.calls[0][3]).toMatchObject({ timeout: 50 });
+		expect(device.isConnected()).toBe(true);
+		expect(events).toEqual([]);
+	});
+
+	test("a failed probe closes the connection: error, then disconnected with reason heartbeat", async () => {
+		const { device, events } = await setup({ connect: { heartbeat: beat } });
+		vi.spyOn(droidsock.shell, "execute").mockRejectedValue(new Error("Command timeout"));
+		await vi.waitUntil(() => names(events).includes("disconnected"));
+		expect(names(events)).toEqual(["error", "disconnected"]);
+		expect(events[0][1].error.message).toBe("Command timeout");
+		expect(events[1][1]).toMatchObject({ intentional: false, reason: "heartbeat" });
+		expect(device.isConnected()).toBe(false);
+	});
+
+	test("with autoReconnect, a failed probe leads to a reconnect and probing resumes", async () => {
+		const { device, events } = await setup({ connect: { heartbeat: beat, autoReconnect: fast } });
+		const spy = vi.spyOn(droidsock.shell, "execute").mockRejectedValueOnce(new Error("dead")).mockResolvedValue("\n");
+		await vi.waitUntil(() => names(events).includes("reconnected"));
+		const calls = spy.mock.calls.length;
+		await vi.waitUntil(() => spy.mock.calls.length > calls);
+		expect(device.isConnected()).toBe(true);
+	});
+
+	test("probes stop after an intentional disconnect", async () => {
+		const { device } = await setup({ connect: { heartbeat: beat } });
+		const spy = vi.spyOn(droidsock.shell, "execute").mockResolvedValue("\n");
+		device.disconnect();
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(spy).not.toHaveBeenCalled();
+	});
+
+	test("heartbeat: true uses the 15s/5s defaults without probing immediately", async () => {
+		const { device } = await setup({ connect: { heartbeat: true } });
+		const spy = vi.spyOn(droidsock.shell, "execute").mockResolvedValue("\n");
+		await new Promise((resolve) => setTimeout(resolve, 80));
+		expect(spy).not.toHaveBeenCalled();
+		expect(device.isConnected()).toBe(true);
+	});
+});

@@ -13,6 +13,7 @@ Single-target operations - the module name (singular `device`) disambiguates the
   - `port`: ADB port (default: `5555`)
   - `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
   - `options.autoReconnect`: Reconnect automatically, with exponential backoff, when the connection drops (default: `false`). `true` uses the defaults below; an object overrides them: `initialDelay` (ms before the first attempt; default: the `retryDelay` config value, `1000`), `factor` (multiplier per failed attempt; `2`), `maxDelay` (ms cap; `30000`), `jitter` (fraction of the delay randomised either way; `0.2`), `maxAttempts` (consecutive failures before giving up; `Infinity`). An explicit `disconnect()` or `remove()` never triggers it, and a device that rejects authentication is not retried. See [Lifecycle events](#lifecycle-events).
+  - `options.heartbeat`: Probe the connection periodically (default: `false`). ADB has no ping message, so each probe runs a trivial shell command (`echo`) and a failed or timed-out probe closes the connection, which surfaces as `disconnected` with `reason: "heartbeat"` (and triggers `autoReconnect` if enabled). `true` uses the defaults; an object overrides them: `interval` (ms between probes; `15000`), `timeout` (ms a probe may take; `5000`).
 
   Connects to a device and returns its live leaf. Calling `connect()` again for the same `host:port` reuses the same leaf - if it's already connected, that connection is returned as-is; if it had disconnected, it's reconnected in place. An `options` argument passed on a later call only overrides the fields it provides (e.g. a different `keyDir`); anything omitted falls back to what the device was created with. The device is also reachable afterward directly off the api tree - not just via the value `connect()` returned - at `api.devices["<sanitized host_port>"]`, where a `.` in `host:port` becomes a single `_` and a `:` becomes a double `__` (the two would otherwise collide into indistinguishable runs of underscores for an IPv6 host), e.g. `10.6.0.108:5555` → `api.devices["10_6_0_108__5555"]`. Every device that's ever been connected lives there until explicitly `remove()`d.
 
@@ -61,7 +62,7 @@ device
 	.on("gave-up", ({ reason }) => console.log("stopped retrying:", reason));
 ```
 
-An explicit `reconnect()` cancels any pending automatic attempt. A listener that throws is logged and does not affect the connection. TCP keepalive is enabled on every connection per the `keepAlive` and `keepAliveInterval` config options (default on, 30 s), so a silently dead link is eventually closed and reported as a drop; there is no ADB-level ping.
+An explicit `reconnect()` cancels any pending automatic attempt. A listener that throws is logged and does not affect the connection. TCP keepalive is enabled on every connection per the `keepAlive` and `keepAliveInterval` config options (default on, 30 s), so a silently dead link is eventually closed and reported as a drop. Enable `heartbeat` to detect a hung device much sooner.
 
 ### Shell Commands
 

@@ -90,6 +90,18 @@ function backoffDelay(policy, attempt) {
 }
 
 /**
+ * Resolves `options.heartbeat` into a concrete probe policy.
+ * @param {boolean|Object} [heartbeat] - `false`/unset disables it; `true` uses the defaults; an object overrides them.
+ * @param {number} [heartbeat.interval=15000] - Milliseconds between probes.
+ * @param {number} [heartbeat.timeout=5000] - Milliseconds a probe may take before the connection is declared dead.
+ * @returns {Object|null} The policy, or null when the heartbeat is off.
+ */
+function resolveHeartbeatPolicy(heartbeat) {
+	if (!heartbeat) return null;
+	return { interval: 15000, timeout: 5000, ...(typeof heartbeat === "object" ? heartbeat : {}) };
+}
+
+/**
  * True for a failure that retrying cannot fix (the device rejected authentication).
  * @param {Error} error - The error from a failed connection attempt.
  * @returns {boolean} Whether to stop retrying.
@@ -157,7 +169,9 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 	// reason `session` does - see the doc comment above.
 	const emitter = new EventEmitter();
 	const closedByUs = new WeakSet(); // connections torn down by disconnect()/remove(), so their close is not a drop
+	const closeReasons = new WeakMap(); // connection -> why droidsock itself closed it (e.g. "heartbeat")
 	let reconnectTimer = null;
+	let heartbeatTimer = null;
 	let inflight = null;
 
 	/**
@@ -175,6 +189,42 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 		} catch (listenerError) {
 			self.log.error(`Listener for "${event}" on ${deviceId} threw:`, listenerError);
 		}
+	}
+
+	function stopHeartbeat() {
+		if (heartbeatTimer) clearInterval(heartbeatTimer);
+		heartbeatTimer = null;
+	}
+
+	/**
+	 * Starts the optional heartbeat for a connection: ADB has no ping message, so each probe is a trivial shell
+	 * command whose round trip proves the device is still answering. A probe that fails or times out closes the
+	 * socket, which surfaces as `disconnected` (reason "heartbeat") and, with autoReconnect on, a reconnect.
+	 * @param {Object} connection - The connection to watch.
+	 */
+	function startHeartbeat(connection) {
+		stopHeartbeat();
+		const policy = resolveHeartbeatPolicy(leaf.options.heartbeat);
+		if (!policy) return;
+		let probing = false;
+		heartbeatTimer = setInterval(async () => {
+			if (probing || session.connection !== connection || !leaf.isConnected()) return;
+			probing = true;
+			try {
+				await self.shell.execute(connection.socket, session.streamManager, "echo", {
+					timeout: policy.timeout,
+					deviceFeatures: connection.deviceFeatures || []
+				});
+			} catch (error) {
+				if (session.connection === connection) {
+					closeReasons.set(connection, "heartbeat");
+					emit("error", { error });
+					connection.disconnect();
+				}
+			} finally {
+				probing = false;
+			}
+		}, policy.interval);
 	}
 
 	function cancelReconnect() {
@@ -197,6 +247,7 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 			self.devices[deviceKey].connection = connection;
 			self.devices[deviceKey].streamManager = streamManager;
 			watchConnection(connection);
+			startHeartbeat(connection);
 			emit("connected", { phase });
 		})().finally(() => {
 			inflight = null;
@@ -215,8 +266,9 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 			// A connection already replaced by a newer session is history, not a drop.
 			if (session.connection !== connection) return;
 			connection.connected = false;
+			stopHeartbeat();
 			const intentional = closedByUs.has(connection);
-			emit("disconnected", { intentional, hadError });
+			emit("disconnected", { intentional, hadError, reason: closeReasons.get(connection) ?? (intentional ? "requested" : "closed") });
 			if (!intentional) scheduleReconnect(1);
 		});
 	}
@@ -498,6 +550,7 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
  * @param {number} [port=5555] - Device port
  * @param {Object} [options={}] - Connection options
  * @param {string} [options.keyDir] - Directory for RSA keys (default: ~/.adb)
+ * @param {boolean|Object} [options.heartbeat=false] - Probe the connection periodically with a trivial shell command and treat a failed or timed-out probe as a dropped connection (see resolveHeartbeatPolicy for the object form).
  * @param {boolean|Object} [options.autoReconnect=false] - Reconnect automatically, with exponential backoff, when the connection drops (see resolveReconnectPolicy for the object form). An explicit disconnect()/remove() never triggers it.
  * @returns {Promise<Object>} The device leaf (also reachable at api.devices.<sanitized host_port>)
  */
