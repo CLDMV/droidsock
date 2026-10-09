@@ -152,6 +152,9 @@ export async function create(options) {
 			} catch (error) {
 				clearTimeout(timeout);
 				self.log.debug("Connection error:", error.message);
+				// A failed handshake (auth rejected, unexpected reply) must not leave its socket open: with
+				// auto-reconnect every retry would otherwise leak one.
+				socket.destroy();
 				reject(error);
 			}
 		});

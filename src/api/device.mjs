@@ -51,8 +51,64 @@
  * construction").
  */
 
+import { EventEmitter } from "node:events";
 import { self } from "@cldmv/slothlet/runtime";
 import { quoteShellArg, sanitizeKey } from "./utils.mjs";
+
+/**
+ * Defaults for `options.autoReconnect` when it is `true` or an object. `initialDelay` falls back to the
+ * `retryDelay` config value when not given.
+ */
+const DEFAULT_RECONNECT_POLICY = { maxAttempts: Infinity, maxDelay: 30000, factor: 2, jitter: 0.2 };
+
+/**
+ * Resolves `options.autoReconnect` into a concrete reconnect policy.
+ * @param {boolean|Object} [autoReconnect] - `false`/unset disables it; `true` uses the defaults; an object overrides them.
+ * @param {number} [autoReconnect.maxAttempts=Infinity] - Consecutive failed attempts before emitting `gave-up`.
+ * @param {number} [autoReconnect.initialDelay] - Delay before the first attempt in ms (default: the `retryDelay` config value).
+ * @param {number} [autoReconnect.maxDelay=30000] - Upper bound for the backoff delay in ms.
+ * @param {number} [autoReconnect.factor=2] - Multiplier applied to the delay after each failed attempt.
+ * @param {number} [autoReconnect.jitter=0.2] - Fraction (0-1) of the delay randomised either way, so a fleet of clients does not retry in lockstep.
+ * @returns {Object|null} The policy, or null when auto-reconnect is off.
+ */
+function resolveReconnectPolicy(autoReconnect) {
+	if (!autoReconnect) return null;
+	const custom = typeof autoReconnect === "object" ? autoReconnect : {};
+	return { ...DEFAULT_RECONNECT_POLICY, initialDelay: self.config.get("retryDelay", 1000), ...custom };
+}
+
+/**
+ * Backoff delay for a given (1-based) attempt: `initialDelay * factor^(attempt-1)`, capped at `maxDelay`, then jittered.
+ * @param {Object} policy - A policy from resolveReconnectPolicy().
+ * @param {number} attempt - 1-based attempt number.
+ * @returns {number} Delay in milliseconds.
+ */
+function backoffDelay(policy, attempt) {
+	const base = Math.min(policy.maxDelay, policy.initialDelay * policy.factor ** (attempt - 1));
+	const spread = base * policy.jitter;
+	return Math.max(0, Math.round(base - spread + Math.random() * spread * 2));
+}
+
+/**
+ * Resolves `options.heartbeat` into a concrete probe policy.
+ * @param {boolean|Object} [heartbeat] - `false`/unset disables it; `true` uses the defaults; an object overrides them.
+ * @param {number} [heartbeat.interval=15000] - Milliseconds between probes.
+ * @param {number} [heartbeat.timeout=5000] - Milliseconds a probe may take before the connection is declared dead.
+ * @returns {Object|null} The policy, or null when the heartbeat is off.
+ */
+function resolveHeartbeatPolicy(heartbeat) {
+	if (!heartbeat) return null;
+	return { interval: 15000, timeout: 5000, ...(typeof heartbeat === "object" ? heartbeat : {}) };
+}
+
+/**
+ * True for a failure that retrying cannot fix (the device rejected authentication).
+ * @param {Error} error - The error from a failed connection attempt.
+ * @returns {boolean} Whether to stop retrying.
+ */
+function isFatalConnectError(error) {
+	return /^Authentication failed/.test(error?.message || "");
+}
 
 /**
  * Establishes one TCP connection + stream manager for a device and wires up
@@ -109,6 +165,141 @@ async function openSession(host, port, options) {
 function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 	const session = { connection: null, streamManager: null };
 
+	// Lifecycle state. Everything here lives in this closure (never on the mounted leaf) for the same
+	// reason `session` does - see the doc comment above.
+	const emitter = new EventEmitter();
+	const closedByUs = new WeakSet(); // connections torn down by disconnect()/remove(), so their close is not a drop
+	const closeReasons = new WeakMap(); // connection -> why droidsock itself closed it (e.g. "heartbeat")
+	let reconnectTimer = null;
+	let heartbeatTimer = null;
+	let inflight = null;
+
+	/**
+	 * Emits a lifecycle event (no-op when the `emitEvents` config is off). A throwing listener is logged rather than
+	 * propagated, so it can't take down the socket handler that fired the event; `error` is only emitted when
+	 * something is listening, since an unhandled EventEmitter `error` would throw.
+	 * @param {string} event - Event name.
+	 * @param {Object} [detail={}] - Event payload; `deviceId`, `host` and `port` are added.
+	 */
+	function emit(event, detail = {}) {
+		if (!self.config.get("emitEvents", true)) return;
+		if (event === "error" && emitter.listenerCount("error") === 0) return;
+		try {
+			emitter.emit(event, { deviceId, host, port, ...detail });
+		} catch (listenerError) {
+			self.log.error(`Listener for "${event}" on ${deviceId} threw:`, listenerError);
+		}
+	}
+
+	function stopHeartbeat() {
+		if (heartbeatTimer) clearInterval(heartbeatTimer);
+		heartbeatTimer = null;
+	}
+
+	/**
+	 * Starts the optional heartbeat for a connection: ADB has no ping message, so each probe is a trivial shell
+	 * command whose round trip proves the device is still answering. A probe that fails or times out closes the
+	 * socket, which surfaces as `disconnected` (reason "heartbeat") and, with autoReconnect on, a reconnect.
+	 * @param {Object} connection - The connection to watch.
+	 */
+	function startHeartbeat(connection) {
+		stopHeartbeat();
+		const policy = resolveHeartbeatPolicy(leaf.options.heartbeat);
+		if (!policy) return;
+		let probing = false;
+		heartbeatTimer = setInterval(async () => {
+			if (probing || session.connection !== connection || !leaf.isConnected()) return;
+			probing = true;
+			try {
+				await self.shell.execute(connection.socket, session.streamManager, "echo", {
+					timeout: policy.timeout,
+					deviceFeatures: connection.deviceFeatures || []
+				});
+			} catch (error) {
+				if (session.connection === connection) {
+					closeReasons.set(connection, "heartbeat");
+					emit("error", { error });
+					connection.disconnect();
+				}
+			} finally {
+				probing = false;
+			}
+		}, policy.interval);
+	}
+
+	function cancelReconnect() {
+		if (reconnectTimer) clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+	}
+
+	/**
+	 * Opens a session and mirrors it onto the mounted leaf. Concurrent callers share one attempt.
+	 * @param {string} [phase="connect"] - "connect" or "reconnect", for the lifecycle events.
+	 * @returns {Promise<void>}
+	 */
+	function establish(phase = "connect") {
+		if (inflight) return inflight;
+		inflight = (async () => {
+			emit("connecting", { phase });
+			const { connection, streamManager } = await openSession(host, port, leaf.options);
+			session.connection = connection;
+			session.streamManager = streamManager;
+			self.devices[deviceKey].connection = connection;
+			self.devices[deviceKey].streamManager = streamManager;
+			watchConnection(connection);
+			startHeartbeat(connection);
+			emit("connected", { phase });
+		})().finally(() => {
+			inflight = null;
+		});
+		return inflight;
+	}
+
+	/**
+	 * Turns on TCP keepalive (per the `keepAlive`/`keepAliveInterval` config) and reports when the socket closes.
+	 * @param {Object} connection - The connection returned by openSession().
+	 */
+	function watchConnection(connection) {
+		const socket = connection.socket;
+		if (self.config.get("keepAlive", true)) socket.setKeepAlive(true, self.config.get("keepAliveInterval", 30000));
+		socket.once("close", (hadError) => {
+			// A connection already replaced by a newer session is history, not a drop.
+			if (session.connection !== connection) return;
+			connection.connected = false;
+			stopHeartbeat();
+			const intentional = closedByUs.has(connection);
+			emit("disconnected", { intentional, hadError, reason: closeReasons.get(connection) ?? (intentional ? "requested" : "closed") });
+			if (!intentional) scheduleReconnect(1);
+		});
+	}
+
+	/**
+	 * Schedules the next automatic reconnect attempt with exponential backoff, or emits `gave-up`.
+	 * @param {number} attempt - 1-based attempt number.
+	 * @param {Error} [lastError] - Why the previous attempt failed.
+	 */
+	function scheduleReconnect(attempt, lastError) {
+		const policy = resolveReconnectPolicy(leaf.options.autoReconnect);
+		if (!policy) return;
+		if (attempt > policy.maxAttempts) {
+			emit("gave-up", { reason: "max-attempts", attempts: attempt - 1, error: lastError });
+			return;
+		}
+		const delay = backoffDelay(policy, attempt);
+		emit("reconnecting", { attempt, delay, error: lastError });
+		reconnectTimer = setTimeout(async () => {
+			reconnectTimer = null;
+			try {
+				await establish("reconnect");
+				emit("reconnected", { attempt });
+			} catch (error) {
+				emit("error", { error, attempt });
+				if (isFatalConnectError(error)) emit("gave-up", { reason: "auth", attempts: attempt, error });
+				else scheduleReconnect(attempt + 1, error);
+			}
+		}, delay);
+	}
+
 	/**
 	 * Throws if this device isn't connected and authorized. Shared guard for every method below.
 	 */
@@ -145,7 +336,29 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 		// re-supply host/port/options. No api-tree work happens here, so
 		// unlike remove() this needs no await at all.
 		disconnect: () => {
-			if (session.connection) session.connection.disconnect();
+			cancelReconnect();
+			if (session.connection) {
+				closedByUs.add(session.connection);
+				session.connection.disconnect();
+			}
+		},
+
+		// Lifecycle events: connecting, connected, disconnected ({intentional, hadError}), reconnecting
+		// ({attempt, delay, error}), reconnected ({attempt}), error ({error, attempt}) and gave-up
+		// ({reason, attempts, error}). Each payload also carries deviceId/host/port. These are plain
+		// functions closing over a private EventEmitter (a data property on the leaf would not survive
+		// slothlet's mount pipeline). They return the mounted leaf so calls can be chained.
+		on: (event, listener) => {
+			emitter.on(event, listener);
+			return self.devices[deviceKey];
+		},
+		once: (event, listener) => {
+			emitter.once(event, listener);
+			return self.devices[deviceKey];
+		},
+		off: (event, listener) => {
+			emitter.off(event, listener);
+			return self.devices[deviceKey];
 		},
 
 		// (Re)establishes the underlying connection for this SAME leaf - used
@@ -173,11 +386,9 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
 			// contract.
 			leaf.options = { ...leaf.options, ...reconnectOptions };
 			if (leaf.isConnected()) return self.devices[deviceKey];
-			const { connection, streamManager } = await openSession(host, port, leaf.options);
-			session.connection = connection;
-			session.streamManager = streamManager;
-			self.devices[deviceKey].connection = connection;
-			self.devices[deviceKey].streamManager = streamManager;
+			// An explicit call wins over a pending automatic attempt.
+			cancelReconnect();
+			await establish();
 			return self.devices[deviceKey];
 		},
 
@@ -339,6 +550,8 @@ function buildDeviceLeaf(host, port, deviceId, deviceKey, options) {
  * @param {number} [port=5555] - Device port
  * @param {Object} [options={}] - Connection options
  * @param {string} [options.keyDir] - Directory for RSA keys (default: ~/.adb)
+ * @param {boolean|Object} [options.heartbeat=false] - Probe the connection periodically with a trivial shell command and treat a failed or timed-out probe as a dropped connection (see resolveHeartbeatPolicy for the object form).
+ * @param {boolean|Object} [options.autoReconnect=false] - Reconnect automatically, with exponential backoff, when the connection drops (see resolveReconnectPolicy for the object form). An explicit disconnect()/remove() never triggers it.
  * @returns {Promise<Object>} The device leaf (also reachable at api.devices.<sanitized host_port>)
  */
 export async function connect(host, port = 5555, options = {}) {
