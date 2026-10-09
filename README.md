@@ -25,18 +25,18 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ## ✨ What's New
 
-### Latest: v2.0.3 (October 2026)
+### Latest: v2.1.0 (October 2026)
 
-- **Bundler-friendly CommonJS entry** - `index.cjs` now loads the ESM entry with a plain `require()` instead of `createRequire`, so esbuild and webpack can follow it, and on a Node.js version without `require(esm)` it fails with a clear message pointing to `import()`. The ESM entry and the API are unchanged ([#58](https://github.com/CLDMV/droidsock/pull/58)).
-- **`devcheck` no longer published** - the source-checkout-only `devcheck.mjs` and its `./devcheck` subpath export are gone from the package. It never did anything in an installed copy, but importing `@cldmv/droidsock/devcheck` now throws `ERR_PACKAGE_PATH_NOT_EXPORTED`, so remove any such import ([#58](https://github.com/CLDMV/droidsock/pull/58)).
-- [View full v2.0.3 Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.3.md)
+- **Device lifecycle events and opt-in auto-reconnect** - each device emits `connecting`, `connected`, `disconnected`, `reconnecting`, `reconnected`, `error` and `gave-up`, and `device.connect(host, port, { autoReconnect })` redials after an unexpected drop with exponential backoff and jitter. An explicit `disconnect()` or `remove()` never triggers it, and a device that rejects authentication is not retried ([#75](https://github.com/CLDMV/droidsock/pull/75)).
+- **Keepalive, heartbeat and a leak fix** - the `keepAlive` config now enables TCP keepalive, an optional `heartbeat` option probes the device with a trivial shell command to catch a hung `adbd`, and a failed handshake no longer leaves its socket open. `engines.node` rises to `>=22.15.0` to match `@cldmv/slothlet` 3.22 ([#74](https://github.com/CLDMV/droidsock/pull/74)).
+- [View full v2.1.0 Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.1.0.md)
 
 ### Recent Releases
 
+- **v2.0.3** (October 2026) - `index.cjs` loads the ESM entry with a plain `require()` and fails clearly without `require(esm)`; `@cldmv/droidsock/devcheck` is no longer exported or published ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.3.md))
 - **v2.0.2** (October 2026) - Dev tooling only: shared CLDMV fix-headers config and a required PR check that never reports as skipped, no runtime change ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.2.md))
 - **v2.0.1** (October 2026) - No runtime change, but `engines.node` rose to `>=22.12.0` (from `>=20.19.0`) to match the vitest 5 toolchain; also syncs the v4 workflows with the v4.29.2 templates ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.1.md))
 - **v2.0.0** (September 2026) - Breaking: the `device` module splits into `device` and `devices`, device leaves persist across a disconnect, plus IPv6, `devices.get()`, and experimental `device.reverse()`, Wi-Fi pairing, streaming install and SYNC V2 ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.0.md))
-- **v1.2.0** (September 2026) - Device discovery (`discover.subnet()` CIDR sweep, `discover.mdns()` for wireless-debugging-advertised devices, both experimental) and a shell-injection fix across every `files.*` shell-based method ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v1/v1.2.0.md))
 
 📚 **For complete version history and detailed release notes, see the [docs/changelog/](https://github.com/CLDMV/droidsock/tree/master/docs/changelog/) folder.**
 
@@ -62,8 +62,8 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ### Requirements
 
-- **Node.js v22.12.0 or higher** (the package's `engines.node` floor)
-- Both `import` and `require()` are supported. `require()` loads the ESM entry through Node's synchronous `require(esm)`, which needs Node.js ^20.19.0 or >=22.12.0; on older versions, load the package with `import()` instead.
+- **Node.js v22.15.0 or higher** (the package's `engines.node` floor)
+- Both `import` and `require()` are supported. `require()` loads the ESM entry through Node's synchronous `require(esm)`, which every supported Node.js version (22.15+) provides; on older versions, load the package with `import()` instead.
 
 ### Install
 
