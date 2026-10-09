@@ -12,6 +12,7 @@ Single-target operations - the module name (singular `device`) disambiguates the
   - `host`: Device IP address (IPv4 or IPv6)
   - `port`: ADB port (default: `5555`)
   - `options.keyDir`: Directory for RSA keys (default: `~/.adb`)
+  - `options.autoReconnect`: Reconnect automatically, with exponential backoff, when the connection drops (default: `false`). `true` uses the defaults below; an object overrides them: `initialDelay` (ms before the first attempt; default: the `retryDelay` config value, `1000`), `factor` (multiplier per failed attempt; `2`), `maxDelay` (ms cap; `30000`), `jitter` (fraction of the delay randomised either way; `0.2`), `maxAttempts` (consecutive failures before giving up; `Infinity`). An explicit `disconnect()` or `remove()` never triggers it, and a device that rejects authentication is not retried. See [Lifecycle events](#lifecycle-events).
 
   Connects to a device and returns its live leaf. Calling `connect()` again for the same `host:port` reuses the same leaf - if it's already connected, that connection is returned as-is; if it had disconnected, it's reconnected in place. An `options` argument passed on a later call only overrides the fields it provides (e.g. a different `keyDir`); anything omitted falls back to what the device was created with. The device is also reachable afterward directly off the api tree - not just via the value `connect()` returned - at `api.devices["<sanitized host_port>"]`, where a `.` in `host:port` becomes a single `_` and a `:` becomes a double `__` (the two would otherwise collide into indistinguishable runs of underscores for an IPv6 host), e.g. `10.6.0.108:5555` → `api.devices["10_6_0_108__5555"]`. Every device that's ever been connected lives there until explicitly `remove()`d.
 
@@ -36,6 +37,31 @@ Collection-wide operations, mounted alongside every device's own leaf at `api.de
 - `disconnect()`: Disconnect without forgetting this device - its leaf stays mounted at `api.devices` and can be reconnected later via `device.connect(host, port)`. Synchronous.
 - `reconnect(options)`: Re-establishes the connection for this same leaf; a no-op if already connected. `options` overrides only the fields it provides, falling back to whatever this device was created (or last reconnected) with. **Async** - `await` it. (`device.connect(host, port, options)` calls this automatically when the target is already known but disconnected - most callers won't need to call it directly.)
 - `remove()`: Disconnects (if needed) and unmounts this device's leaf from `api.devices` - the same operation as `device.remove(host, port)`, called on the leaf directly. **Async** - `await` it.
+
+### Lifecycle events
+
+Each device emits lifecycle events, subscribed to with `on(event, listener)`, `once(event, listener)` and `off(event, listener)` (each returns the device, so calls chain). Every payload carries `deviceId`, `host` and `port`. Events are controlled by the `emitEvents` config option (default `true`).
+
+| Event          | Payload (besides the identity fields)                        | Fired when                                                                                      |
+| -------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `connecting`   | `phase` (`"connect"` or `"reconnect"`)                       | an attempt to open the connection starts                                                        |
+| `connected`    | `phase`                                                      | the connection is open and authorized                                                           |
+| `disconnected` | `intentional`, `hadError`                                    | the socket closed; `intentional` is `true` for `disconnect()`/`remove()` and `false` for a drop |
+| `reconnecting` | `attempt`, `delay`, `error`                                  | an automatic attempt is scheduled `delay` ms from now (`autoReconnect` only)                    |
+| `reconnected`  | `attempt`                                                    | an automatic attempt succeeded                                                                  |
+| `error`        | `error`, `attempt`                                           | an automatic attempt failed (only emitted when a listener is attached)                          |
+| `gave-up`      | `reason` (`"max-attempts"` or `"auth"`), `attempts`, `error` | automatic reconnection stopped for good                                                         |
+
+```js
+const device = await droidsock.device.connect("192.168.1.50", 5555, { autoReconnect: { maxDelay: 15000 } });
+device
+	.on("disconnected", ({ intentional }) => console.log("dropped", { intentional }))
+	.on("reconnecting", ({ attempt, delay }) => console.log(`retry #${attempt} in ${delay}ms`))
+	.on("reconnected", () => console.log("back online"))
+	.on("gave-up", ({ reason }) => console.log("stopped retrying:", reason));
+```
+
+An explicit `reconnect()` cancels any pending automatic attempt. A listener that throws is logged and does not affect the connection. TCP keepalive is enabled on every connection per the `keepAlive` and `keepAliveInterval` config options (default on, 30 s), so a silently dead link is eventually closed and reported as a drop; there is no ADB-level ping.
 
 ### Shell Commands
 
