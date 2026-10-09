@@ -22,7 +22,7 @@
 	},
 	"type": "module",
 	"engines": {
-		"node": ">=22.12.0"
+		"node": ">=22.15.0"
 	},
 	"scripts": {
 		"build": "node build.mjs",
