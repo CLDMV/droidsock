@@ -15,9 +15,9 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 > [!NOTE]
 > **Current status:**
 >
-> - **Shell + streaming**: Stable - command execution, interactive shells, and log/process streaming all work over the real ADB protocol.
+> - **Shell + streaming**: Stable - command execution, interactive shells, and log / process streaming all work over the real ADB protocol.
 > - **File transfer**: `mkdir` / `remove` / `move` / `copy` / `chmod` / `diskUsage` / `find` / `stat` work today via shell commands. `list` prefers a binary-safe SYNC-based implementation with automatic shell fallback.
-> - **Experimental**: `push` / `pull` / `pushV2` / `pullV2` / `listSync` / `listV2` / `statV2` (real ADB SYNC sub-protocol usage, both the legacy 32-bit and newer 64-bit variants), `device.reboot()`, `device.forward()` / `device.reverse()`, `device.install()` (both the classic push-then-install and modern streaming install paths), and `pairing.pair()` (Wi-Fi pairing) are all implemented - built from the ADB protocol spec and covered by unit tests (several exercised against real loopback TCP/TLS servers, not purely mocks) - but **none of them have been run against a real device yet**. See [#1](https://github.com/CLDMV/droidsock/issues/1).
+> - **Experimental**: `push` / `pull` / `pushV2` / `pullV2` / `listSync` / `listV2` / `statV2` (real ADB SYNC sub-protocol usage, both the legacy 32-bit and newer 64-bit variants), `device.reboot()`, `device.forward()` / `device.reverse()`, `device.install()` (both the classic push-then-install and modern streaming install paths), and `pairing.pair()` (Wi-Fi pairing) are all implemented - built from the ADB protocol spec and covered by unit tests (several exercised against real loopback TCP / TLS servers, not purely mocks) - but **none of them have been run against a real device yet**. See [#1](https://github.com/CLDMV/droidsock/issues/1).
 
 [![Contributors]][contributors_url] [![Sponsor shinrai]][sponsor_url]
 
@@ -44,12 +44,12 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ## 🚀 Key Features
 
-- ✅ **Complete ADB Protocol**: TCP connection, CNXN/AUTH handshake, and stream multiplexing implemented from scratch
-- ✅ **RSA Authentication**: Automatic key generation and ADB-specific signature/public-key formatting
+- ✅ **Complete ADB Protocol**: TCP connection, CNXN / AUTH handshake, and stream multiplexing implemented from scratch
+- ✅ **RSA Authentication**: Automatic key generation and ADB-specific signature / public-key formatting
 - ✅ **Stream Multiplexing**: Multiple concurrent operations over a single connection
 - ✅ **Shell Commands**: Execute commands, stream output, interactive sessions
 - ✅ **File Operations**: Shell-based `mkdir` / `remove` / `move` / `copy` / `chmod` / `diskUsage` / `find`, plus binary-safe SYNC-based `list`, and experimental `push` / `pull` (legacy 32-bit) / `pushV2` / `pullV2` / `listV2` / `statV2` (64-bit)
-- ✅ **Reboot** (experimental): Real `reboot:` service, including bootloader/recovery/sideload modes
+- ✅ **Reboot** (experimental): Real `reboot:` service, including bootloader / recovery / sideload modes
 - ✅ **Port Forwarding** (experimental): `adb forward`/`adb reverse`-equivalent TCP tunneling, both directions
 - ✅ **APK Install** (experimental): `adb install`-equivalent local APK installation - classic push-then-install and modern streaming (`exec:cmd package install`) paths
 - ✅ **Wi-Fi Pairing** (experimental): `adb pair`-equivalent PIN-based pairing (SPAKE2-over-Ed25519 + TLS 1.3) for Android 11+ wireless debugging
@@ -131,9 +131,9 @@ The example scripts read device addresses from `references/devices.json`. The fo
 
 ## 📘 API Reference
 
-`droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` connects to a device (IPv4 or IPv6) and returns its live leaf - also reachable afterward at `api.devices["<host>_<port>"]` (a `.` becomes `_`, a `:` becomes `__`) - exposing connection state, shell execution/streaming, file operations (`push` / `pull` / `list` / `stat`), reboot, port forwarding, and APK install. `api.device.disconnect(host, port)` tears down one device's connection without forgetting it - reconnect later with `connect()` on the same host:port, no need to re-supply options; `api.device.remove(host, port)` forgets it entirely. `api.devices.list()` / `disconnect()` (all) / `remove()` (all) / `get(idOrLeaf)` manage the set of known devices as a whole.
+`droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` connects to a device (IPv4 or IPv6) and returns its live leaf - also reachable afterward at `api.devices["<host>_<port>"]` (a `.` becomes `_`, a `:` becomes `__`) - exposing connection state, shell execution / streaming, file operations (`push` / `pull` / `list` / `stat`), reboot, port forwarding, and APK install. `api.device.disconnect(host, port)` tears down one device's connection without forgetting it - reconnect later with `connect()` on the same host:port, no need to re-supply options; `api.device.remove(host, port)` forgets it entirely. `api.devices.list()` / `disconnect()` (all) / `remove()` (all) / `get(idOrLeaf)` manage the set of known devices as a whole.
 
-📚 **See [docs/API.md](https://github.com/CLDMV/droidsock/blob/master/docs/API.md) for the full method reference**, including every option and the experimental/scope caveats on `push` / `pull` / `list` / `forward` / `reverse` / `install`.
+📚 **See [docs/API.md](https://github.com/CLDMV/droidsock/blob/master/docs/API.md) for the full method reference**, including every option and the experimental / scope caveats on `push` / `pull` / `list` / `forward` / `reverse` / `install`.
 
 ---
 
@@ -168,9 +168,9 @@ node examples/streaming-example.mjs files
 
 `src/droidsock.mjs` composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
 
-1. **Connection Layer** (`src/api/connection.mjs`): TCP socket + CNXN/AUTH handshake
-2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature/public-key formatting
-3. **Stream Layer** (`src/api/stream.mjs`): ADB stream multiplexing (OPEN/WRTE/OKAY/CLSE)
+1. **Connection Layer** (`src/api/connection.mjs`): TCP socket + CNXN / AUTH handshake
+2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature / public-key formatting
+3. **Stream Layer** (`src/api/stream.mjs`): ADB stream multiplexing (OPEN / WRTE / OKAY / CLSE)
 4. **Shell Layer** (`src/api/shell.mjs`): Command execution, streaming, and interactive shell APIs
 5. **Files Layer** (`src/api/files.mjs`): Shell-based file operations, a binary-safe SYNC `LIST` implementation with automatic shell fallback, and an experimental ADB SYNC sub-protocol implementation for real binary transfer (`push` / `pull`) - not yet validated against a real device
 6. **Reboot Layer** (`src/api/reboot.mjs`): Real ADB `reboot:` service
@@ -181,7 +181,7 @@ node examples/streaming-example.mjs files
 11. **Device / Devices Layers** (`src/api/device.mjs`, `src/api/devices.mjs`): High-level per-device API composing the layers above, split by single-target (`device.connect`/`disconnect`/`remove`) vs. collection-wide (`devices.list`/`disconnect`/`remove`/`get`) operations. Each device is a real, persistent slothlet leaf at `api.devices.<sanitized host_port>`, assigned there by `connect()` rather than held in a private module variable, so its methods keep working `self`/context access exactly like any other leaf - the leaf outlives any one connection, and only `remove()` unmounts it
 12. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
 
-📚 **See [docs/PROTOCOL.md](https://github.com/CLDMV/droidsock/blob/master/docs/PROTOCOL.md) for wire-level protocol details** (packet structure, auth flow, SYNC sub-protocol framing, reboot/forward service usage).
+📚 **See [docs/PROTOCOL.md](https://github.com/CLDMV/droidsock/blob/master/docs/PROTOCOL.md) for wire-level protocol details** (packet structure, auth flow, SYNC sub-protocol framing, reboot / forward service usage).
 
 ---
 
@@ -210,7 +210,7 @@ node examples/streaming-example.mjs files
 
 ## 🧪 Development
 
-The implementation is built directly from the public ADB protocol documentation (AOSP `SYNC.TXT` and the wire-protocol references), cross-checked against Google's own reference client (`google/python-adb`) where the public docs are ambiguous, and covered by a mocked Vitest suite. The core connection/shell/stream-multiplexing path has real device usage behind it; the newer SYNC-protocol and service additions (`push` / `pull` / `listSync` / `reboot` / `forward` / `install`) have not yet been run against a real device - see the status note at the top of this README and [#1](https://github.com/CLDMV/droidsock/issues/1).
+The implementation is built directly from the public ADB protocol documentation (AOSP `SYNC.TXT` and the wire-protocol references), cross-checked against Google's own reference client (`google/python-adb`) where the public docs are ambiguous, and covered by a mocked Vitest suite. The core connection / shell / stream-multiplexing path has real device usage behind it; the newer SYNC-protocol and service additions (`push` / `pull` / `listSync` / `reboot` / `forward` / `install`) have not yet been run against a real device - see the status note at the top of this README and [#1](https://github.com/CLDMV/droidsock/issues/1).
 
 ---
 
