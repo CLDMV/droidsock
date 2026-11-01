@@ -62,8 +62,8 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ### Requirements
 
-- **Node.js v22.15.0 or higher** (the package's `engines.node` floor)
-- Both `import` and `require()` are supported. `require()` loads the ESM entry through Node's synchronous `require(esm)`, which every supported Node.js version (22.15+) provides; on older versions, load the package with `import()` instead.
+- **Node.js v22.22.0 or higher** (the package's `engines.node` floor)
+- Both `import` and `require()` are supported. `require()` loads the ESM entry through Node's synchronous `require(esm)`, which every supported Node.js version (22.22+) provides; on older versions, load the package with `import()` instead.
 
 ### Install
 
