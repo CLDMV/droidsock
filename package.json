@@ -29,7 +29,7 @@
 		"build:types": "tsc --project .configs/tsconfig.dts.jsonc",
 		"build:ci": "npm run build && npm run build:types && npm run test:types",
 		"test": "node tests/run-vitest.mjs && npm run test:cjs",
-		"test:cjs": "CI=1 node --test tests/cjs/entry.test.cjs",
+		"test:cjs": "node --test tests/cjs/entry.test.cjs",
 		"test:watch": "vitest --config .configs/vitest.config.mjs",
 		"test:types": "tsc --noEmit --project .configs/tsconfig.dts.jsonc",
 		"coverage": "node tests/run-vitest.mjs --coverage-quiet && npm run test:cjs",

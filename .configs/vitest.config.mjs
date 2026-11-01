@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:43-07:00 (1790980183)
+ *	@Last modified time: 2026-11-01T09:30:16-08:00 (1793554216)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -30,10 +30,8 @@ export default defineConfig({
 	test: {
 		include: ["tests/**/*.test.vitest.mjs"],
 		exclude: ["node_modules"],
-		// devcheck.mjs reads the condition from NODE_OPTIONS (not execArgv), so supply it
-		// there as well as to the workers' node CLI for Node's own resolver.
+		// Workers get the condition on their node CLI too, so Node's own resolver loads src/.
 		nodeOptions: ["--conditions=droidsock-dev"],
-		env: { NODE_OPTIONS: "--conditions=droidsock-dev" },
 		environment: "node",
 		// Pays the one-time cold cost of composing a droidsock instance before each file is
 		// collected, outside any timed hook - see the file's own doc comment.
