@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
+ *	@Last modified time: 2026-11-01T12:20:54-08:00 (1793564454)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -46,6 +46,17 @@ test("require() returns the same droidsock factory as import", async () => {
 	assert.equal(droidsock, esm.default);
 	assert.deepEqual(Object.keys(esm).sort(), ["ADB", "AndroidDebugBridge", "DroidSock", "createDroidSock", "default"]);
 	for (const name of aliases) assert.equal(droidsock[name], esm[name], name);
+});
+
+test('require("dist/index.cjs") returns the same function as the ESM default of dist/index.mjs and dist/droidsock.mjs', async () => {
+	const droidsock = require(path.join(dist, "index.cjs"));
+	const esm = await import(pathToFileURL(path.join(dist, "index.mjs")).href);
+	const factory = await import(pathToFileURL(path.join(dist, "droidsock.mjs")).href);
+
+	assert.equal(droidsock, esm.default);
+	// index.mjs re-exports the factory directly, so the package default is createDroidSock itself.
+	assert.equal(esm.default, factory.default);
+	assert.equal(droidsock.name, "createDroidSock");
 });
 
 test("dist/main.mjs re-exports dist/index.mjs and warns once", () => {

@@ -170,7 +170,7 @@ node --conditions=droidsock-dev examples/streaming-example.mjs files
 
 ## 🏗️ Architecture
 
-`src/index.mjs` is the package entry (`src/index.cjs` is the CommonJS entry, which loads it through `require(esm)`); its factory loads `src/droidsock.mjs`, which composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
+`src/index.mjs` is the package entry (`src/index.cjs` is the CommonJS entry, which loads it through `require(esm)`) and re-exports the factory from `src/droidsock.mjs`, which composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
 
 1. **Connection Layer** (`src/api/connection.mjs`): TCP socket + CNXN / AUTH handshake
 2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature / public-key formatting
