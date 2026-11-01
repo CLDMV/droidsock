@@ -7,20 +7,11 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:45-07:00 (1790980185)
+ *	@Last modified time: 2026-11-01T09:30:21-08:00 (1793554221)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
  */
-
-// Development environment check (must happen before droidsock imports)
-(async () => {
-	try {
-		await import("./devcheck.mjs");
-	} catch {
-		// ignore
-	}
-})();
 
 /**
  * Creates a DroidSock instance for ADB communication. This is the default export - the
