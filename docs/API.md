@@ -88,10 +88,10 @@ An explicit `reconnect()` cancels any pending automatic attempt. A listener that
 
 - `push(localPath, remotePath, options)`: **Experimental** - real binary transfer via the ADB SYNC sub-protocol (legacy 32-bit `SEND`). `options.onProgress`, `options.mode` (default `0o644`). Not yet validated against a real device.
 - `pull(remotePath, localPath, options)`: **Experimental** - real binary transfer via the ADB SYNC sub-protocol (legacy 32-bit `RECV`). `options.onProgress`. Not yet validated against a real device.
-- `pushV2(localPath, remotePath, options)` / `pullV2(remotePath, localPath, options)`: **Experimental** - the 64-bit `SEND_V2`/`RECV_V2` SYNC variants, for files/listings beyond the legacy 32-bit ~2.14GB ceiling. Same options as `push`/`pull`, plus `options.compression` (`"none"` (default) or `"brotli"`) for per-chunk compression - only usable against a device that also advertised `sendrecv_v2_brotli`. `lz4`/`zstd` aren't implemented (tracked separately). Only usable against a device that advertised the `sendrecv_v2` feature. See [#8](https://github.com/CLDMV/droidsock/issues/8).
+- `pushV2(localPath, remotePath, options)` / `pullV2(remotePath, localPath, options)`: **Experimental** - the 64-bit `SEND_V2`/`RECV_V2` SYNC variants, for files / listings beyond the legacy 32-bit ~2.14GB ceiling. Same options as `push`/`pull`, plus `options.compression` (`"none"` (default) or `"brotli"`) for per-chunk compression - only usable against a device that also advertised `sendrecv_v2_brotli`. `lz4`/`zstd` aren't implemented (tracked separately). Only usable against a device that advertised the `sendrecv_v2` feature. See [#8](https://github.com/CLDMV/droidsock/issues/8).
 - `list(remotePath)`: List directory contents, preferring the binary-safe SYNC `LIST` command (**experimental**, not yet validated against a real device) and falling back to shell `ls -la` parsing when the SYNC service isn't usable. A real `LIST` failure (e.g. a missing path) is never masked by the fallback - it's rethrown as-is.
 - `listV2(remotePath)`: **Experimental** - the 64-bit `LIST_V2` SYNC variant. No shell fallback. Only usable against a device that advertised the `ls_v2` feature.
-- `stat(remotePath)`: Get file/directory info via shell (raw `stat` output)
+- `stat(remotePath)`: Get file / directory info via shell (raw `stat` output)
 - `statV2(remotePath)`: **Experimental** - binary-safe stat via the 64-bit `STAT_V2` SYNC command, returning structured fields (`mode`/`size`/`atime`/`mtime`/`ctime`/`uid`/`gid`/`nlink`/`dev`/`ino` - the 64-bit fields as `BigInt`) instead of raw shell text. Only usable against a device that advertised the `stat_v2` feature.
 
 For direct access to one specific listing implementation (bypassing the automatic SYNC-then-shell preference), call the underlying module functions directly: `api.files.listSync(device.connection.socket, device.streamManager, remotePath)` or `api.files.listShell(...)` with the same arguments.
@@ -101,7 +101,7 @@ For direct access to one specific listing implementation (bypassing the automati
 - `reboot(mode)`: **Experimental** - reboots the device via the real ADB `reboot:` service - a distinct top-level service like `shell:` / `sync:`, not a shell command. `mode` is `""` (normal, default), `"bootloader"`, `"recovery"`, `"sideload"`, `"sideload-auto-reboot"`, or any other string for a vendor-specific target. Not yet validated against a real device.
 - `rebootBootloader()` / `rebootRecovery()` / `rebootSideload()`: Shortcuts for the corresponding `reboot(mode)` call.
 
-`device.shell("reboot")` still works unchanged for a plain reboot - it's just unable to reach bootloader/recovery/sideload, since those aren't real shell commands.
+`device.shell("reboot")` still works unchanged for a plain reboot - it's just unable to reach bootloader / recovery / sideload, since those aren't real shell commands.
 
 ### Port Forwarding (Experimental)
 

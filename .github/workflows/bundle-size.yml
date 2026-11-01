@@ -6,7 +6,7 @@
 #	@Email: <Shinrai@users.noreply.github.com>
 #	-----
 #	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
-#	@Last modified time: 2026-10-02T15:29:43-07:00 (1790980183)
+#	@Last modified time: 2026-11-01T12:12:53-08:00 (1793563973)
 #	-----
 #	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
 #
@@ -39,8 +39,7 @@ jobs:
         uses: CLDMV/.github/.github/workflows/reusable-bundle-size.yml@v4
         with:
             build_command: "npm run build:ci"
-            # Every glob starts with `*`: the v4.29.2 measure action walks each path prefix separately (a bare top-level file matches nothing, and mixing `*` globs with directory globs counts files twice). CLDMV/.github#326/#327 fix this upstream.
-            dist_paths: "*index.mjs,*index.cjs,*dist/**,*types/index.d.mts*,*types/dist/**"
+            dist_paths: "dist/**.mjs,dist/**.cjs" # the published runtime files (package.json "files", minus sourcemaps)
             # warning_pct: 5
             # warning_bytes: 500
             # comment_mode: "update"
