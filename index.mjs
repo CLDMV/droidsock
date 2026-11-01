@@ -13,14 +13,28 @@
  *
  */
 
-// Development environment check (must happen before droidsock imports)
-(async () => {
+// Development environment check. devcheck.mjs exists only in a source checkout and exits the
+// process when the checkout runs without --conditions=droidsock-dev. It is loaded synchronously,
+// through require(esm), so it finishes before this module's exports can be called from ESM or
+// CJS: nothing runs against the wrong tree first. There is no top-level await, which
+// index.cjs's require(esm) would reject (ERR_REQUIRE_ASYNC_MODULE).
+//
+// node:module is looked up at runtime with process.getBuiltinModule instead of a static import,
+// so bundlers never see a Node built-in: without process (a browser) the check is skipped.
+// devcheck.mjs is never published, so MODULE_NOT_FOUND is expected outside a checkout; any other
+// error is a real failure.
+/* v8 ignore start -- the false branch is a non-Node runtime and the catch runs in the published
+   package (no devcheck.mjs) or when devcheck.mjs fails to load; the suite always runs on Node
+   from a checkout where devcheck.mjs exists and loads */
+const nodeModule = typeof process === "undefined" ? undefined : process.getBuiltinModule?.("node:module");
+if (nodeModule) {
 	try {
-		await import("./devcheck.mjs");
-	} catch {
-		// ignore
+		nodeModule.createRequire(import.meta.url)("./devcheck.mjs");
+	} catch (error) {
+		if (error?.code !== "MODULE_NOT_FOUND") throw error;
 	}
-})();
+}
+/* v8 ignore stop */
 
 /**
  * Creates a DroidSock instance for ADB communication. This is the default export - the

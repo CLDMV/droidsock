@@ -30,6 +30,10 @@ export default defineConfig({
 	test: {
 		include: ["tests/**/*.test.vitest.mjs"],
 		exclude: ["node_modules"],
+		// devcheck.mjs reads the condition from NODE_OPTIONS (not execArgv), so supply it
+		// there as well as to the workers' node CLI for Node's own resolver.
+		nodeOptions: ["--conditions=droidsock-dev"],
+		env: { NODE_OPTIONS: "--conditions=droidsock-dev" },
 		environment: "node",
 		// Pays the one-time cold cost of composing a droidsock instance before each file is
 		// collected, outside any timed hook - see the file's own doc comment.
