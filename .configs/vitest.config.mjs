@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-01T09:30:16-08:00 (1793554216)
+ *	@Last modified time: 2026-11-01T12:12:53-08:00 (1793563973)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -18,8 +18,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	resolve: {
-		// Needed so tests load from src/ (via the "./main" export's droidsock-dev
-		// condition) instead of dist/, which may be stale or unbuilt locally.
+		// Replaces the defaults, so keep the usual ones alongside the package's own
+		// droidsock-dev condition, which routes "@cldmv/droidsock" to src/ instead of
+		// dist/ (stale or unbuilt locally).
 		conditions: ["droidsock-dev", "module", "browser", "development", "production"]
 	},
 	ssr: {
@@ -50,7 +51,8 @@ export default defineConfig({
 		},
 		coverage: {
 			provider: "v8",
-			include: ["src/**"],
+			// src/index.cjs is exercised by `npm run test:cjs` (node --test), not Vitest.
+			include: ["src/**/*.mjs"],
 			exclude: ["**/*.json", "tests/**"],
 			reporter: ["text", "html", "json-summary", "json"]
 		}

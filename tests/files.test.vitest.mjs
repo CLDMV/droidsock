@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:46-07:00 (1790980186)
+ *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -20,7 +20,7 @@ import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import createDroidSock from "../index.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 // files.mjs's implemented operations are thin shell-command builders - they call
 // self.shell.execute(socket, streamManager, command) and nothing else. Spying on

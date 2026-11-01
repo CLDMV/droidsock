@@ -2,34 +2,41 @@
 	"name": "@cldmv/droidsock",
 	"version": "2.1.1",
 	"description": "Complete Node.js implementation of the Android Debug Bridge (ADB) protocol",
-	"main": "./index.cjs",
-	"module": "./index.mjs",
-	"types": "./types/index.d.mts",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.mjs",
+	"types": "./types/src/index.d.mts",
 	"exports": {
 		".": {
-			"types": "./types/index.d.mts",
-			"import": "./index.mjs",
-			"require": "./index.cjs"
+			"droidsock-dev": {
+				"types": "./types/src/index.d.mts",
+				"import": "./src/index.mjs",
+				"require": "./src/index.cjs"
+			},
+			"types": "./types/src/index.d.mts",
+			"import": "./dist/index.mjs",
+			"require": "./dist/index.cjs"
 		},
 		"./main": {
 			"droidsock-dev": {
-				"types": "./types/src/droidsock.d.mts",
-				"import": "./src/droidsock.mjs"
+				"types": "./types/src/index.d.mts",
+				"import": "./src/main.mjs"
 			},
-			"types": "./types/dist/droidsock.d.mts",
-			"import": "./dist/droidsock.mjs"
-		}
+			"types": "./types/src/index.d.mts",
+			"import": "./dist/main.mjs"
+		},
+		"./package.json": "./package.json"
 	},
 	"type": "module",
 	"engines": {
 		"node": ">=22.15.0"
 	},
 	"scripts": {
-		"build": "node build.mjs",
-		"build:types": "tsc --project .configs/tsconfig.dts.jsonc",
-		"build:ci": "npm run build && npm run build:types && npm run test:types",
+		"build": "tsup",
+		"types:build": "tsc --project .configs/tsconfig.dts.jsonc",
+		"build:ci": "npm run lint && npm run format:check && npm run types:build && npm run build",
+		"prepack": "npm run build",
 		"test": "node tests/run-vitest.mjs && npm run test:cjs",
-		"test:cjs": "node --test tests/cjs/entry.test.cjs",
+		"test:cjs": "npm run build && node --conditions=droidsock-dev --test tests/cjs/entry.test.cjs",
 		"test:watch": "vitest --config .configs/vitest.config.mjs",
 		"test:types": "tsc --noEmit --project .configs/tsconfig.dts.jsonc",
 		"coverage": "node tests/run-vitest.mjs --coverage-quiet && npm run test:cjs",
@@ -41,7 +48,7 @@
 		"fix:headers": "fix-headers --config .configs/fix-headers.json",
 		"prepare": "node -e \"import('./.githooks/install.mjs').catch(()=>{})\"",
 		"precommit:local": "npm run test:types",
-		"precommit": "npm run build && npm run build:types && npm run test:types && npm run lint && npm run format:check && npm run test"
+		"precommit": "npm run build:ci && npm run test:types && npm run test"
 	},
 	"keywords": [
 		"adb",
@@ -89,14 +96,9 @@
 		"access": "public"
 	},
 	"files": [
-		"index.mjs",
-		"index.cjs",
-		"README.md",
-		"LICENSE",
-		"types/dist/",
-		"types/index.d.mts",
-		"types/index.d.mts.map",
-		"dist/"
+		"dist/",
+		"!dist/**/*.map",
+		"types/"
 	],
 	"sideEffects": false,
 	"devDependencies": {
@@ -112,10 +114,10 @@
 		"@eslint/markdown": "^8.0.3",
 		"@types/node": "^26.4.0",
 		"@vitest/coverage-v8": "^5.0.0",
-		"esbuild": "^0.28.2",
 		"eslint": "^10.9.1",
 		"globals": "^17.11.0",
 		"prettier": "^3.9.6",
+		"tsup": "^9.0.0",
 		"typescript": "^6.0.3",
 		"vitest": "^5.0.0"
 	},

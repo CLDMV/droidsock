@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:47-07:00 (1790980187)
+ *	@Last modified time: 2026-11-01T12:12:58-08:00 (1793563978)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -16,7 +16,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import net from "node:net";
-import createDroidSock from "../index.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 // reverse.mjs's device-facing side (registering/unregistering the tunnel) is
 // tested against a fully fake stream manager, matching forward.test.vitest.mjs's
