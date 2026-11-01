@@ -62,8 +62,8 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ### Requirements
 
-- **Node.js v22.15.0 or higher** (the package's `engines.node` floor)
-- Both `import` and `require()` are supported. `require()` loads the ESM entry through Node's synchronous `require(esm)`, which every supported Node.js version (22.15+) provides; on older versions, load the package with `import()` instead.
+- **Node.js v22.22.0 or higher** (the package's `engines.node` floor)
+- Both `import` and `require()` are supported. `require()` loads the ESM entry through Node's synchronous `require(esm)`, which every supported Node.js version (22.22+) provides; on older versions, load the package with `import()` instead.
 
 ### Install
 
@@ -102,6 +102,8 @@ await device.disconnect();
 ```
 
 CommonJS works the same way: `const droidsock = require("@cldmv/droidsock")` (also available as `createDroidSock`).
+
+`@cldmv/droidsock/main` is a deprecated alias of `@cldmv/droidsock`: it exports the same functions and prints a `DeprecationWarning` (code `CLDMV_DROIDSOCK_MAIN`) once per process. Import `@cldmv/droidsock` instead; the alias is removed in the next major version.
 
 ---
 
@@ -143,30 +145,32 @@ The example scripts read device addresses from `references/devices.json`. The fo
 
 ```bash
 # Run basic example with default device
-node examples/basic-usage.mjs
+node --conditions=droidsock-dev examples/basic-usage.mjs
 
 # Run with specific device
-node examples/basic-usage.mjs livingroom
+node --conditions=droidsock-dev examples/basic-usage.mjs livingroom
 ```
+
+The examples import `@cldmv/droidsock` by name. `--conditions=droidsock-dev` runs them against `src/`; without it they load the build in `dist/` (run `npm run build` first). See [Development](#-development).
 
 ### Streaming Commands
 
 ```bash
 # Stream logcat
-node examples/streaming-example.mjs logcat
+node --conditions=droidsock-dev examples/streaming-example.mjs logcat
 
 # Stream top command
-node examples/streaming-example.mjs top
+node --conditions=droidsock-dev examples/streaming-example.mjs top
 
 # File transfer demo
-node examples/streaming-example.mjs files
+node --conditions=droidsock-dev examples/streaming-example.mjs files
 ```
 
 ---
 
 ## 🏗️ Architecture
 
-`src/droidsock.mjs` composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
+`src/index.mjs` is the package entry (`src/index.cjs` is the CommonJS entry, which loads it through `require(esm)`) and re-exports the factory from `src/droidsock.mjs`, which composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
 
 1. **Connection Layer** (`src/api/connection.mjs`): TCP socket + CNXN / AUTH handshake
 2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature / public-key formatting
@@ -211,6 +215,18 @@ node examples/streaming-example.mjs files
 ## 🧪 Development
 
 The implementation is built directly from the public ADB protocol documentation (AOSP `SYNC.TXT` and the wire-protocol references), cross-checked against Google's own reference client (`google/python-adb`) where the public docs are ambiguous, and covered by a mocked Vitest suite. The core connection / shell / stream-multiplexing path has real device usage behind it; the newer SYNC-protocol and service additions (`push` / `pull` / `listSync` / `reboot` / `forward` / `install`) have not yet been run against a real device - see the status note at the top of this README and [#1](https://github.com/CLDMV/droidsock/issues/1).
+
+The source lives in `src/`: `src/index.mjs` is the ESM entry and `src/index.cjs` the CommonJS entry. `npm run build` (tsup) writes `dist/`, which mirrors `src/` file by file because slothlet scans `dist/api/` at runtime; `dist/index.cjs` is a verbatim copy of `src/index.cjs`. Only `dist/` and `types/` are published.
+
+In a checkout, `@cldmv/droidsock` resolves to `dist/` by default. The `droidsock-dev` export condition switches it to `src/`:
+
+| Run                                              | Resolves to                                                     |
+| ------------------------------------------------ | --------------------------------------------------------------- |
+| `node app.mjs`                                   | `dist/index.mjs` (`ERR_MODULE_NOT_FOUND` until `npm run build`) |
+| `node --conditions=droidsock-dev app.mjs`        | `src/index.mjs`                                                 |
+| `require("@cldmv/droidsock")` with the condition | `src/index.cjs` → `src/index.mjs`                               |
+
+Set it once per shell with `export NODE_OPTIONS=--conditions=droidsock-dev`. `npm test` runs the Vitest suite against `src/` (the Vitest config passes the condition) and then `npm run test:cjs`, which builds `dist/` and checks it with `node --test`.
 
 ---
 

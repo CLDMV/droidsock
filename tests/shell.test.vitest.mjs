@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:47-07:00 (1790980187)
+ *	@Last modified time: 2026-11-01T12:12:58-08:00 (1793563978)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -15,7 +15,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import createDroidSock from "../index.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 // execute() talks directly to a raw ADB socket (not through streamManager) using the same
 // 24-byte OPEN/OKAY/WRTE/CLSE framing connection.mjs itself uses - a plain EventEmitter with a

@@ -7,14 +7,14 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:46-07:00 (1790980186)
+ *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
  */
 
 import { describe, test, expect } from "vitest";
-import createDroidSock from "../index.mjs";
+import createDroidSock from "@cldmv/droidsock";
 import { isValidPort } from "../src/api/utils.mjs";
 
 // These suites need a real Android/Fire TV device reachable on the network with
@@ -69,7 +69,7 @@ describe.skipIf(!deviceHost)("live device connection", () => {
 	});
 
 	test("the named createDroidSock export reaches the same device", async () => {
-		const { createDroidSock: createDroidSockNamed } = await import("../index.mjs");
+		const { createDroidSock: createDroidSockNamed } = await import("@cldmv/droidsock");
 		const droidsock = await createDroidSockNamed();
 		const device = await droidsock.device.connect(deviceHost, devicePort);
 		try {
