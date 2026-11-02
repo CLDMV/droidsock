@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:45-07:00 (1790980185)
+ *	@Last modified time: 2026-11-01T12:12:55-08:00 (1793563975)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -19,7 +19,7 @@
  * Demonstrates connecting to a device and executing basic commands.
  */
 
-import droidsock from "../index.mjs";
+import droidsock from "@cldmv/droidsock";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";

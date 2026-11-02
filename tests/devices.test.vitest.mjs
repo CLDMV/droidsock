@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:46-07:00 (1790980186)
+ *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -18,7 +18,7 @@ import net from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import createDroidSock from "../index.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 const MSG_CNXN = 0x4e584e43;
 const MSG_AUTH = 0x48545541;

@@ -15,9 +15,9 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 > [!NOTE]
 > **Current status:**
 >
-> - **Shell + streaming**: Stable - command execution, interactive shells, and log/process streaming all work over the real ADB protocol.
+> - **Shell + streaming**: Stable - command execution, interactive shells, and log / process streaming all work over the real ADB protocol.
 > - **File transfer**: `mkdir` / `remove` / `move` / `copy` / `chmod` / `diskUsage` / `find` / `stat` work today via shell commands. `list` prefers a binary-safe SYNC-based implementation with automatic shell fallback.
-> - **Experimental**: `push` / `pull` / `pushV2` / `pullV2` / `listSync` / `listV2` / `statV2` (real ADB SYNC sub-protocol usage, both the legacy 32-bit and newer 64-bit variants), `device.reboot()`, `device.forward()` / `device.reverse()`, `device.install()` (both the classic push-then-install and modern streaming install paths), and `pairing.pair()` (Wi-Fi pairing) are all implemented - built from the ADB protocol spec and covered by unit tests (several exercised against real loopback TCP/TLS servers, not purely mocks) - but **none of them have been run against a real device yet**. See [#1](https://github.com/CLDMV/droidsock/issues/1).
+> - **Experimental**: `push` / `pull` / `pushV2` / `pullV2` / `listSync` / `listV2` / `statV2` (real ADB SYNC sub-protocol usage, both the legacy 32-bit and newer 64-bit variants), `device.reboot()`, `device.forward()` / `device.reverse()`, `device.install()` (both the classic push-then-install and modern streaming install paths), and `pairing.pair()` (Wi-Fi pairing) are all implemented - built from the ADB protocol spec and covered by unit tests (several exercised against real loopback TCP / TLS servers, not purely mocks) - but **none of them have been run against a real device yet**. See [#1](https://github.com/CLDMV/droidsock/issues/1).
 
 [![Contributors]][contributors_url] [![Sponsor shinrai]][sponsor_url]
 
@@ -25,18 +25,18 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ## ✨ What's New
 
-### Latest: v2.1.0 (October 2026)
+### Latest: v2.2.0 (November 2026)
 
-- **Device lifecycle events and opt-in auto-reconnect** - each device emits `connecting`, `connected`, `disconnected`, `reconnecting`, `reconnected`, `error` and `gave-up`, and `device.connect(host, port, { autoReconnect })` redials after an unexpected drop with exponential backoff and jitter. An explicit `disconnect()` or `remove()` never triggers it, and a device that rejects authentication is not retried ([#75](https://github.com/CLDMV/droidsock/pull/75)).
-- **Keepalive, heartbeat and a leak fix** - the `keepAlive` config now enables TCP keepalive, an optional `heartbeat` option probes the device with a trivial shell command to catch a hung `adbd`, and a failed handshake no longer leaves its socket open. `engines.node` rises to `>=22.15.0` to match `@cldmv/slothlet` 3.22 ([#74](https://github.com/CLDMV/droidsock/pull/74)).
-- [View full v2.1.0 Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.1.0.md)
+- **CLDMV library layout** - the entries are `src/index.mjs` and `src/index.cjs`, tsup builds `dist/`, and the package ships `dist/` and `types/`. The ADB API is unchanged. `@cldmv/droidsock/main` is now a deprecated alias of the root that prints a one-time `DeprecationWarning` (code `CLDMV_DROIDSOCK_MAIN`); import `@cldmv/droidsock` instead. `@cldmv/slothlet` moves to `^3.22.1` so `require()` keeps working with the static entry ([#91](https://github.com/CLDMV/droidsock/issues/91), [#93](https://github.com/CLDMV/droidsock/pull/93)).
+- **Runtime floor unchanged** - `engines.node` stays `>=22.15.0` for `import` and `require()`. Developing the package needs Node.js 22.22.0, now declared in `devEngines`, which doesn't affect installs ([#100](https://github.com/CLDMV/droidsock/pull/100)).
+- [View full v2.2.0 Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.2.0.md)
 
 ### Recent Releases
 
+- **v2.1.0** (October 2026) - device lifecycle events, opt-in auto-reconnect with backoff, TCP keepalive and an optional heartbeat; `engines.node` rose to `>=22.15.0` ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.1.0.md))
 - **v2.0.3** (October 2026) - `index.cjs` loads the ESM entry with a plain `require()` and fails clearly without `require(esm)`; `@cldmv/droidsock/devcheck` is no longer exported or published ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.3.md))
 - **v2.0.2** (October 2026) - Dev tooling only: shared CLDMV fix-headers config and a required PR check that never reports as skipped, no runtime change ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.2.md))
 - **v2.0.1** (October 2026) - No runtime change, but `engines.node` rose to `>=22.12.0` (from `>=20.19.0`) to match the vitest 5 toolchain; also syncs the v4 workflows with the v4.29.2 templates ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.1.md))
-- **v2.0.0** (September 2026) - Breaking: the `device` module splits into `device` and `devices`, device leaves persist across a disconnect, plus IPv6, `devices.get()`, and experimental `device.reverse()`, Wi-Fi pairing, streaming install and SYNC V2 ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.0.md))
 
 📚 **For complete version history and detailed release notes, see the [docs/changelog/](https://github.com/CLDMV/droidsock/tree/master/docs/changelog/) folder.**
 
@@ -44,12 +44,12 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ## 🚀 Key Features
 
-- ✅ **Complete ADB Protocol**: TCP connection, CNXN/AUTH handshake, and stream multiplexing implemented from scratch
-- ✅ **RSA Authentication**: Automatic key generation and ADB-specific signature/public-key formatting
+- ✅ **Complete ADB Protocol**: TCP connection, CNXN / AUTH handshake, and stream multiplexing implemented from scratch
+- ✅ **RSA Authentication**: Automatic key generation and ADB-specific signature / public-key formatting
 - ✅ **Stream Multiplexing**: Multiple concurrent operations over a single connection
 - ✅ **Shell Commands**: Execute commands, stream output, interactive sessions
 - ✅ **File Operations**: Shell-based `mkdir` / `remove` / `move` / `copy` / `chmod` / `diskUsage` / `find`, plus binary-safe SYNC-based `list`, and experimental `push` / `pull` (legacy 32-bit) / `pushV2` / `pullV2` / `listV2` / `statV2` (64-bit)
-- ✅ **Reboot** (experimental): Real `reboot:` service, including bootloader/recovery/sideload modes
+- ✅ **Reboot** (experimental): Real `reboot:` service, including bootloader / recovery / sideload modes
 - ✅ **Port Forwarding** (experimental): `adb forward`/`adb reverse`-equivalent TCP tunneling, both directions
 - ✅ **APK Install** (experimental): `adb install`-equivalent local APK installation - classic push-then-install and modern streaming (`exec:cmd package install`) paths
 - ✅ **Wi-Fi Pairing** (experimental): `adb pair`-equivalent PIN-based pairing (SPAKE2-over-Ed25519 + TLS 1.3) for Android 11+ wireless debugging
@@ -62,8 +62,9 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ### Requirements
 
-- **Node.js v22.15.0 or higher** (the package's `engines.node` floor)
+- **Node.js v22.15.0 or higher** (the package's `engines.node` floor, set by its `@cldmv/slothlet` dependency)
 - Both `import` and `require()` are supported. `require()` loads the ESM entry through Node's synchronous `require(esm)`, which every supported Node.js version (22.15+) provides; on older versions, load the package with `import()` instead.
+- Developing this package needs Node.js 22.22.0 or later (`devEngines`).
 
 ### Install
 
@@ -103,6 +104,8 @@ await device.disconnect();
 
 CommonJS works the same way: `const droidsock = require("@cldmv/droidsock")` (also available as `createDroidSock`).
 
+`@cldmv/droidsock/main` is a deprecated alias of `@cldmv/droidsock`: it exports the same functions and prints a `DeprecationWarning` (code `CLDMV_DROIDSOCK_MAIN`) once per process. Import `@cldmv/droidsock` instead; the alias is removed in the next major version.
+
 ---
 
 ## ⚙️ Device Configuration
@@ -131,9 +134,9 @@ The example scripts read device addresses from `references/devices.json`. The fo
 
 ## 📘 API Reference
 
-`droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` connects to a device (IPv4 or IPv6) and returns its live leaf - also reachable afterward at `api.devices["<host>_<port>"]` (a `.` becomes `_`, a `:` becomes `__`) - exposing connection state, shell execution/streaming, file operations (`push` / `pull` / `list` / `stat`), reboot, port forwarding, and APK install. `api.device.disconnect(host, port)` tears down one device's connection without forgetting it - reconnect later with `connect()` on the same host:port, no need to re-supply options; `api.device.remove(host, port)` forgets it entirely. `api.devices.list()` / `disconnect()` (all) / `remove()` (all) / `get(idOrLeaf)` manage the set of known devices as a whole.
+`droidsock(options)` (also `createDroidSock`) creates the API instance; `api.device.connect(host, port, options)` connects to a device (IPv4 or IPv6) and returns its live leaf - also reachable afterward at `api.devices["<host>_<port>"]` (a `.` becomes `_`, a `:` becomes `__`) - exposing connection state, shell execution / streaming, file operations (`push` / `pull` / `list` / `stat`), reboot, port forwarding, and APK install. `api.device.disconnect(host, port)` tears down one device's connection without forgetting it - reconnect later with `connect()` on the same host:port, no need to re-supply options; `api.device.remove(host, port)` forgets it entirely. `api.devices.list()` / `disconnect()` (all) / `remove()` (all) / `get(idOrLeaf)` manage the set of known devices as a whole.
 
-📚 **See [docs/API.md](https://github.com/CLDMV/droidsock/blob/master/docs/API.md) for the full method reference**, including every option and the experimental/scope caveats on `push` / `pull` / `list` / `forward` / `reverse` / `install`.
+📚 **See [docs/API.md](https://github.com/CLDMV/droidsock/blob/master/docs/API.md) for the full method reference**, including every option and the experimental / scope caveats on `push` / `pull` / `list` / `forward` / `reverse` / `install`.
 
 ---
 
@@ -143,34 +146,36 @@ The example scripts read device addresses from `references/devices.json`. The fo
 
 ```bash
 # Run basic example with default device
-node examples/basic-usage.mjs
+node --conditions=droidsock-dev examples/basic-usage.mjs
 
 # Run with specific device
-node examples/basic-usage.mjs livingroom
+node --conditions=droidsock-dev examples/basic-usage.mjs livingroom
 ```
+
+The examples import `@cldmv/droidsock` by name. `--conditions=droidsock-dev` runs them against `src/`; without it they load the build in `dist/` (run `npm run build` first). See [Development](#-development).
 
 ### Streaming Commands
 
 ```bash
 # Stream logcat
-node examples/streaming-example.mjs logcat
+node --conditions=droidsock-dev examples/streaming-example.mjs logcat
 
 # Stream top command
-node examples/streaming-example.mjs top
+node --conditions=droidsock-dev examples/streaming-example.mjs top
 
 # File transfer demo
-node examples/streaming-example.mjs files
+node --conditions=droidsock-dev examples/streaming-example.mjs files
 ```
 
 ---
 
 ## 🏗️ Architecture
 
-`src/droidsock.mjs` composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
+`src/index.mjs` is the package entry (`src/index.cjs` is the CommonJS entry, which loads it through `require(esm)`) and re-exports the factory from `src/droidsock.mjs`, which composes the layers below into a single api tree via [`@cldmv/slothlet`](https://github.com/CLDMV/slothlet):
 
-1. **Connection Layer** (`src/api/connection.mjs`): TCP socket + CNXN/AUTH handshake
-2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature/public-key formatting
-3. **Stream Layer** (`src/api/stream.mjs`): ADB stream multiplexing (OPEN/WRTE/OKAY/CLSE)
+1. **Connection Layer** (`src/api/connection.mjs`): TCP socket + CNXN / AUTH handshake
+2. **Authentication Layer** (`src/api/auth.mjs`): RSA key management and ADB signature / public-key formatting
+3. **Stream Layer** (`src/api/stream.mjs`): ADB stream multiplexing (OPEN / WRTE / OKAY / CLSE)
 4. **Shell Layer** (`src/api/shell.mjs`): Command execution, streaming, and interactive shell APIs
 5. **Files Layer** (`src/api/files.mjs`): Shell-based file operations, a binary-safe SYNC `LIST` implementation with automatic shell fallback, and an experimental ADB SYNC sub-protocol implementation for real binary transfer (`push` / `pull`) - not yet validated against a real device
 6. **Reboot Layer** (`src/api/reboot.mjs`): Real ADB `reboot:` service
@@ -181,7 +186,7 @@ node examples/streaming-example.mjs files
 11. **Device / Devices Layers** (`src/api/device.mjs`, `src/api/devices.mjs`): High-level per-device API composing the layers above, split by single-target (`device.connect`/`disconnect`/`remove`) vs. collection-wide (`devices.list`/`disconnect`/`remove`/`get`) operations. Each device is a real, persistent slothlet leaf at `api.devices.<sanitized host_port>`, assigned there by `connect()` rather than held in a private module variable, so its methods keep working `self`/context access exactly like any other leaf - the leaf outlives any one connection, and only `remove()` unmounts it
 12. **Config / Log Layers** (`src/api/config.mjs`, `src/api/log.mjs`): Shared configuration and logging
 
-📚 **See [docs/PROTOCOL.md](https://github.com/CLDMV/droidsock/blob/master/docs/PROTOCOL.md) for wire-level protocol details** (packet structure, auth flow, SYNC sub-protocol framing, reboot/forward service usage).
+📚 **See [docs/PROTOCOL.md](https://github.com/CLDMV/droidsock/blob/master/docs/PROTOCOL.md) for wire-level protocol details** (packet structure, auth flow, SYNC sub-protocol framing, reboot / forward service usage).
 
 ---
 
@@ -210,7 +215,19 @@ node examples/streaming-example.mjs files
 
 ## 🧪 Development
 
-The implementation is built directly from the public ADB protocol documentation (AOSP `SYNC.TXT` and the wire-protocol references), cross-checked against Google's own reference client (`google/python-adb`) where the public docs are ambiguous, and covered by a mocked Vitest suite. The core connection/shell/stream-multiplexing path has real device usage behind it; the newer SYNC-protocol and service additions (`push` / `pull` / `listSync` / `reboot` / `forward` / `install`) have not yet been run against a real device - see the status note at the top of this README and [#1](https://github.com/CLDMV/droidsock/issues/1).
+The implementation is built directly from the public ADB protocol documentation (AOSP `SYNC.TXT` and the wire-protocol references), cross-checked against Google's own reference client (`google/python-adb`) where the public docs are ambiguous, and covered by a mocked Vitest suite. The core connection / shell / stream-multiplexing path has real device usage behind it; the newer SYNC-protocol and service additions (`push` / `pull` / `listSync` / `reboot` / `forward` / `install`) have not yet been run against a real device - see the status note at the top of this README and [#1](https://github.com/CLDMV/droidsock/issues/1).
+
+The source lives in `src/`: `src/index.mjs` is the ESM entry and `src/index.cjs` the CommonJS entry. `npm run build` (tsup) writes `dist/`, which mirrors `src/` file by file because slothlet scans `dist/api/` at runtime; `dist/index.cjs` is a verbatim copy of `src/index.cjs`. Only `dist/` and `types/` are published.
+
+In a checkout, `@cldmv/droidsock` resolves to `dist/` by default. The `droidsock-dev` export condition switches it to `src/`:
+
+| Run                                              | Resolves to                                                     |
+| ------------------------------------------------ | --------------------------------------------------------------- |
+| `node app.mjs`                                   | `dist/index.mjs` (`ERR_MODULE_NOT_FOUND` until `npm run build`) |
+| `node --conditions=droidsock-dev app.mjs`        | `src/index.mjs`                                                 |
+| `require("@cldmv/droidsock")` with the condition | `src/index.cjs` → `src/index.mjs`                               |
+
+Set it once per shell with `export NODE_OPTIONS=--conditions=droidsock-dev`. `npm test` runs the Vitest suite against `src/` (the Vitest config passes the condition) and then `npm run test:cjs`, which builds `dist/` and checks it with `node --test`.
 
 ---
 

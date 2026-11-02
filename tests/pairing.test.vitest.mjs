@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:47-07:00 (1790980187)
+ *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -21,7 +21,7 @@ import tls from "node:tls";
 import crypto from "node:crypto";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import selfsigned from "selfsigned";
-import createDroidSock from "../index.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 // pairing.mjs's internal SPAKE2/PairingPacket/PeerInfo/AES-GCM machinery is
 // deliberately unexported (matching discover.mjs's own convention) and is

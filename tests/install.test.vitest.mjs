@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:46-07:00 (1790980186)
+ *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -18,7 +18,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import createDroidSock from "../index.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 // install.classic() is pure composition of files.push + shell.commands.installApk +
 // files.remove - spying on all three lets this be tested for real without any

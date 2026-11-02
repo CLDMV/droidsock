@@ -7,14 +7,14 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:46-07:00 (1790980186)
+ *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
  */
 
 import { describe, test, expect } from "vitest";
-import createDroidSock, { createDroidSock as createDroidSockNamed, DroidSock, ADB, AndroidDebugBridge } from "../index.mjs";
+import createDroidSock, { createDroidSock as createDroidSockNamed, DroidSock, ADB, AndroidDebugBridge } from "@cldmv/droidsock";
 
 describe("index.mjs default export", () => {
 	test("createDroidSock() builds an API with every expected module", async () => {
