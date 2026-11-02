@@ -25,18 +25,18 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 
 ## ✨ What's New
 
-### Latest: v2.1.0 (October 2026)
+### Latest: v2.2.0 (November 2026)
 
-- **Device lifecycle events and opt-in auto-reconnect** - each device emits `connecting`, `connected`, `disconnected`, `reconnecting`, `reconnected`, `error` and `gave-up`, and `device.connect(host, port, { autoReconnect })` redials after an unexpected drop with exponential backoff and jitter. An explicit `disconnect()` or `remove()` never triggers it, and a device that rejects authentication is not retried ([#75](https://github.com/CLDMV/droidsock/pull/75)).
-- **Keepalive, heartbeat and a leak fix** - the `keepAlive` config now enables TCP keepalive, an optional `heartbeat` option probes the device with a trivial shell command to catch a hung `adbd`, and a failed handshake no longer leaves its socket open. `engines.node` rises to `>=22.15.0` to match `@cldmv/slothlet` 3.22 ([#74](https://github.com/CLDMV/droidsock/pull/74)).
-- [View full v2.1.0 Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.1.0.md)
+- **CLDMV library layout** - the entries are `src/index.mjs` and `src/index.cjs`, tsup builds `dist/`, and the package ships `dist/` and `types/`. The ADB API is unchanged. `@cldmv/droidsock/main` is now a deprecated alias of the root that prints a one-time `DeprecationWarning` (code `CLDMV_DROIDSOCK_MAIN`); import `@cldmv/droidsock` instead. `@cldmv/slothlet` moves to `^3.22.1` so `require()` keeps working with the static entry ([#91](https://github.com/CLDMV/droidsock/issues/91), [#93](https://github.com/CLDMV/droidsock/pull/93)).
+- **Node.js 22.22.0 or later** - `engines.node` goes from `>=22.15.0` to `>=22.22.0`, because the development toolchain no longer runs on earlier 22.x releases. This is a real requirement change; stay on v2.1.0 if you can't upgrade Node.js yet ([#93](https://github.com/CLDMV/droidsock/pull/93)).
+- [View full v2.2.0 Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.2.0.md)
 
 ### Recent Releases
 
+- **v2.1.0** (October 2026) - device lifecycle events, opt-in auto-reconnect with backoff, TCP keepalive and an optional heartbeat; `engines.node` rose to `>=22.15.0` ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.1.0.md))
 - **v2.0.3** (October 2026) - `index.cjs` loads the ESM entry with a plain `require()` and fails clearly without `require(esm)`; `@cldmv/droidsock/devcheck` is no longer exported or published ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.3.md))
 - **v2.0.2** (October 2026) - Dev tooling only: shared CLDMV fix-headers config and a required PR check that never reports as skipped, no runtime change ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.2.md))
 - **v2.0.1** (October 2026) - No runtime change, but `engines.node` rose to `>=22.12.0` (from `>=20.19.0`) to match the vitest 5 toolchain; also syncs the v4 workflows with the v4.29.2 templates ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.1.md))
-- **v2.0.0** (September 2026) - Breaking: the `device` module splits into `device` and `devices`, device leaves persist across a disconnect, plus IPv6, `devices.get()`, and experimental `device.reverse()`, Wi-Fi pairing, streaming install and SYNC V2 ([Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.0.0.md))
 
 📚 **For complete version history and detailed release notes, see the [docs/changelog/](https://github.com/CLDMV/droidsock/tree/master/docs/changelog/) folder.**
 
