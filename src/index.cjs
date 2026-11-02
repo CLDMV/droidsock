@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-01T13:19:58-08:00 (1793567998)
+ *	@Last modified time: 2026-11-01T16:38:35-08:00 (1793579915)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -32,7 +32,7 @@
 // ERR_REQUIRE_ESM, so fail early with a message that says what to do instead.
 if (!process.features?.require_module) {
 	const error = new Error(
-		`@cldmv/droidsock: require() needs Node.js >=22.22.0 (this is ${process.version}). On older Node.js, load the package with import() instead.`
+		`@cldmv/droidsock: require() needs Node.js >=22.15.0 (this is ${process.version}). On older Node.js, load the package with import() instead.`
 	);
 	error.code = "ERR_REQUIRE_ESM";
 	throw error;
