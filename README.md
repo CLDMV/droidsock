@@ -28,7 +28,7 @@ It talks to devices directly over TCP, with no `adb` binary or ADB server in bet
 ### Latest: v2.2.0 (November 2026)
 
 - **CLDMV library layout** - the entries are `src/index.mjs` and `src/index.cjs`, tsup builds `dist/`, and the package ships `dist/` and `types/`. The ADB API is unchanged. `@cldmv/droidsock/main` is now a deprecated alias of the root that prints a one-time `DeprecationWarning` (code `CLDMV_DROIDSOCK_MAIN`); import `@cldmv/droidsock` instead. `@cldmv/slothlet` moves to `^3.22.1` so `require()` keeps working with the static entry ([#91](https://github.com/CLDMV/droidsock/issues/91), [#93](https://github.com/CLDMV/droidsock/pull/93)).
-- **Node.js 22.22.0 or later** - `engines.node` goes from `>=22.15.0` to `>=22.22.0`, because the development toolchain no longer runs on earlier 22.x releases. This is a real requirement change; stay on v2.1.0 if you can't upgrade Node.js yet ([#93](https://github.com/CLDMV/droidsock/pull/93)).
+- **Node.js 22.22.0 or later** - `engines.node` goes from `>=22.15.0` to `>=22.22.0`, because the development toolchain no longer runs on earlier 22.x releases. Stay on v2.1.0 if you can't upgrade Node.js yet ([#93](https://github.com/CLDMV/droidsock/pull/93)).
 - [View full v2.2.0 Changelog](https://github.com/CLDMV/droidsock/blob/master/docs/changelog/v2/v2.2.0.md)
 
 ### Recent Releases
