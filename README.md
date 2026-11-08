@@ -227,7 +227,7 @@ In a checkout, `@cldmv/droidsock` resolves to `dist/` by default. The `droidsock
 | `node --conditions=droidsock-dev app.mjs`        | `src/index.mjs`                                                 |
 | `require("@cldmv/droidsock")` with the condition | `src/index.cjs` → `src/index.mjs`                               |
 
-Set it once per shell with `export NODE_OPTIONS=--conditions=droidsock-dev`. `npm test` runs the Vitest suite against `src/` (the Vitest config passes the condition) and then `npm run test:cjs`, which builds `dist/` and checks it with `node --test`.
+Set it once per shell with `export NODE_OPTIONS=--conditions=droidsock-dev`. `npm test` runs the Vitest suite against `src/` (the Vitest config passes the condition) and then `npm run test:cjs`, which builds `dist/` and checks it with `node --test`, and `npm run test:dist` builds `dist/` and runs the Vitest suite against it (`npm test` includes both).
 
 ---
 

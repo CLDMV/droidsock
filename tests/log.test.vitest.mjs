@@ -7,14 +7,14 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:47-07:00 (1790980187)
+ *	@Last modified time: 2026-11-07T21:59:30-08:00 (1794117570)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import createDroidSock from "../src/droidsock.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 // log.mjs reads config through self.config, so it's exercised through the
 // composed slothlet API. Config is a module-level singleton, so each test
