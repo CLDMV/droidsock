@@ -112,6 +112,15 @@ afterEach(async () => {
 });
 
 /**
+ * Identifies a device leaf by its address. Leaves handed out through another
+ * module (devices.get/list) are that module's view of the same leaf, so tests
+ * compare addresses instead of object identity.
+ * @param {Object} leaf - A device leaf.
+ * @returns {string} "host:port".
+ */
+const id = (leaf) => `${leaf.host}:${leaf.port}`;
+
+/**
  * Connects a fresh droidsock instance to a fresh fake ADB server, returning the device leaf, the
  * droidsock instance (so tests can spy on its composed modules), and the device's real session -
  * the socket and stream manager connection.create()/stream.create() actually returned, which is
@@ -234,26 +243,34 @@ describe("device leaf - thin delegation to the composed protocol modules", () =>
 
 	test("startStreamingShell()/startInteractiveShell() delegate to shell.startStreaming/startInteractive", async () => {
 		const { device, droidsock: instance, session } = await connectDevice();
-		const control = { stop: () => {} };
+		const stop = vi.fn();
+		const control = { stop };
 		const streamingSpy = vi.spyOn(instance.shell, "startStreaming").mockReturnValue(control);
 		const interactiveSpy = vi.spyOn(instance.shell, "startInteractive").mockReturnValue(control);
 
-		expect(device.startStreamingShell("logcat", { onData: null })).toBe(control);
+		// The control comes back as the device module's view of the shell's
+		// object, so check that it drives the real one rather than its identity.
+		device.startStreamingShell("logcat", { onData: null }).stop();
+		expect(stop).toHaveBeenCalledTimes(1);
 		expect(streamingSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "logcat", { onData: null });
 
-		expect(device.startInteractiveShell("sh")).toBe(control);
+		device.startInteractiveShell("sh").stop();
+		expect(stop).toHaveBeenCalledTimes(2);
 		expect(interactiveSpy).toHaveBeenCalledWith(session.socket, session.streamManager, "sh", {});
 	});
 
 	test("logcat()/top() convenience shortcuts delegate to startStreamingShell with the right fixed command", async () => {
 		const { device, droidsock: instance, session } = await connectDevice();
-		const control = { stop: () => {} };
+		const stop = vi.fn();
+		const control = { stop };
 		const streamingSpy = vi.spyOn(instance.shell, "startStreaming").mockReturnValue(control);
 
-		expect(device.logcat()).toBe(control);
+		device.logcat().stop();
+		expect(stop).toHaveBeenCalledTimes(1);
 		expect(streamingSpy).toHaveBeenLastCalledWith(session.socket, session.streamManager, "logcat", {});
 
-		expect(device.top()).toBe(control);
+		device.top().stop();
+		expect(stop).toHaveBeenCalledTimes(2);
 		expect(streamingSpy).toHaveBeenLastCalledWith(session.socket, session.streamManager, "top -m 10", {});
 	});
 
@@ -347,7 +364,7 @@ describe("device.disconnect(host, port) - single-target disconnect", () => {
 		// list() only shows connected devices, but the leaf itself is still
 		// mounted and reconnectable - disconnect() is not remove().
 		expect(instance.devices.list()).toEqual([]);
-		expect(instance.devices.get(device)).toBe(device);
+		expect(id(instance.devices.get(device))).toBe(id(device));
 	});
 });
 

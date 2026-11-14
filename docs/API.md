@@ -6,7 +6,7 @@ The default export, and the quick path - creates a DroidSock API instance. `opti
 
 ## device.connect(host, port, options) / device.disconnect(host, port) / device.remove(host, port)
 
-Single-target operations - the module name (singular `device`) disambiguates them from the collection-wide operations on `devices` below. A device leaf, once created, is a persistent handle that outlives any one TCP connection: `disconnect()` only tears down the current socket, it does **not** forget the device - `connect()` on the same `host:port` later reconnects that exact same leaf, reusing whatever `options` it was created with, so a reference you're holding stays valid and you never have to re-supply `host`/`port`/`options` just to reconnect. `remove()` is the separate, explicit "forget this device" operation.
+Single-target operations - the module name (singular `device`) disambiguates them from the collection-wide operations on `devices` below. A device leaf, once created, is a persistent handle that outlives any one TCP connection: `disconnect()` only tears down the current socket, it does **not** forget the device - `connect()` on the same `host:port` later reconnects that same leaf in place, reusing whatever `options` it was created with, so a reference you're holding stays valid and you never have to re-supply `host`/`port`/`options` just to reconnect. `remove()` is the separate, explicit "forget this device" operation.
 
 - `connect(host, port, options)`:
   - `host`: Device IP address (IPv4 or IPv6)
