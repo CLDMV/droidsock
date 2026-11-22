@@ -7,7 +7,7 @@
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-10-02T15:29:46-07:00 (1790980186)
+ *	@Last modified time: 2026-11-07T21:59:27-08:00 (1794117567)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import createDroidSock from "../src/droidsock.mjs";
+import createDroidSock from "@cldmv/droidsock";
 
 // auth.mjs calls self.log.debug() internally, so it must be exercised through
 // the composed slothlet API (which binds `self`), not by importing the module

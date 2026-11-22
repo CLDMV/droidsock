@@ -101,6 +101,15 @@ afterEach(async () => {
 });
 
 /**
+ * Identifies a device leaf by its address. Leaves handed out through another
+ * module (devices.get/list) are that module's view of the same leaf, so tests
+ * compare addresses instead of object identity.
+ * @param {Object} leaf - A device leaf.
+ * @returns {string} "host:port".
+ */
+const id = (leaf) => `${leaf.host}:${leaf.port}`;
+
+/**
  * Connects a fresh droidsock instance to a fresh fake ADB server, returning both the device
  * leaf and the droidsock instance so tests can exercise the collection-wide functions.
  * @returns {Promise<{device: Object, droidsock: Object}>} The connected leaf and its instance.
@@ -116,7 +125,7 @@ async function connectDevice() {
 describe("devices.list()", () => {
 	test("only returns currently-connected devices, excluding a stale one", async () => {
 		const { device, droidsock: instance } = await connectDevice();
-		expect(instance.devices.list()).toEqual([device]);
+		expect(instance.devices.list().map(id)).toEqual([id(device)]);
 
 		device.connection.socket.destroy();
 		await vi.waitUntil(() => device.isConnected() === false);
@@ -135,7 +144,7 @@ describe("devices.disconnect() - collection-wide, zero-arg only, synchronous", (
 			expect(instance.devices.disconnect()).toBe(2);
 			expect(instance.devices.list()).toHaveLength(0);
 			// disconnect() (all) is not remove() (all) - both leaves stay mounted.
-			expect(instance.devices.get(second)).toBe(second);
+			expect(id(instance.devices.get(second))).toBe(id(second));
 		} finally {
 			await new Promise((resolve) => secondServer.server.close(resolve));
 		}
@@ -182,12 +191,12 @@ describe("devices.remove() - collection-wide, zero-arg only, async", () => {
 describe("devices.get(idOrLeaf)", () => {
 	test("looks up a connected leaf by 'host:port' string", async () => {
 		const { device, droidsock: instance } = await connectDevice();
-		expect(instance.devices.get(`127.0.0.1:${fakeServer.port}`)).toBe(device);
+		expect(id(instance.devices.get(`127.0.0.1:${fakeServer.port}`))).toBe(id(device));
 	});
 
 	test("looks up a connected leaf by the leaf object itself (idempotent pass-through)", async () => {
 		const { device, droidsock: instance } = await connectDevice();
-		expect(instance.devices.get(device)).toBe(device);
+		expect(id(instance.devices.get(device))).toBe(id(device));
 	});
 
 	test("returns undefined for a host:port with nothing mounted", async () => {
@@ -205,7 +214,7 @@ describe("devices.get(idOrLeaf)", () => {
 	test("still returns the SAME leaf after disconnect() - it's not unmounted, only remove() unmounts it", async () => {
 		const { device, droidsock: instance } = await connectDevice();
 		device.disconnect();
-		expect(instance.devices.get(device)).toBe(device);
+		expect(id(instance.devices.get(device))).toBe(id(device));
 	});
 
 	test("returns undefined once the device has actually been removed", async () => {

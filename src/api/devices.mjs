@@ -59,7 +59,7 @@ export function list() {
  * Looks up a device leaf - connected or currently disconnected - by
  * "host:port" string or by the leaf object itself (as returned by
  * device.connect()). Since disconnect() no longer unmounts a leaf, this
- * reliably re-resolves the SAME object across a disconnect/reconnect cycle;
+ * reliably re-resolves the same device across a disconnect/reconnect cycle;
  * it only returns undefined for a device that was never connected or has
  * since been forgotten via remove().
  * @param {string|Object} idOrLeaf - "host:port" (bracket the host for IPv6,
