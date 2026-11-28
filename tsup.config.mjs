@@ -1,13 +1,13 @@
 /**
  *
  *	@Project: @cldmv/droidsock
- *	@Filename: /tsup.config.mjs
+ *	@Filename: tsup.config.mjs
  *	@Date: 2026-11-01T12:08:46-08:00 (1793563726)
  *	@Author: Nate Corcoran <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-01T12:12:58-08:00 (1793563978)
+ *	@Last modified time: 2026-11-28T09:53:43-08:00 (1795888423)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
