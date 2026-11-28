@@ -45,7 +45,9 @@ test("require() returns the same droidsock factory as import", async () => {
 	assert.equal(typeof droidsock, "function");
 	assert.equal(droidsock, esm.default);
 	assert.deepEqual(Object.keys(esm).sort(), ["ADB", "AndroidDebugBridge", "DroidSock", "createDroidSock", "default"]);
-	for (const name of aliases) assert.equal(droidsock[name], esm[name], name);
+	// The generic shim returns the one exported function and attaches nothing to it.
+	for (const name of aliases) assert.equal(droidsock[name], undefined, name);
+	assert.deepEqual(Object.keys(droidsock), []);
 });
 
 test('require("dist/index.cjs") returns the same function as the ESM default of dist/index.mjs and dist/droidsock.mjs', async () => {
@@ -57,6 +59,30 @@ test('require("dist/index.cjs") returns the same function as the ESM default of 
 	// index.mjs re-exports the factory directly, so the package default is createDroidSock itself.
 	assert.equal(esm.default, factory.default);
 	assert.equal(droidsock.name, "createDroidSock");
+});
+
+test("require() in a fresh process returns the factory with no alias properties", () => {
+	for (const entry of ["./src/index.cjs", "./dist/index.cjs"]) {
+		const script = `
+			const x = require(${JSON.stringify(entry)});
+			import(${JSON.stringify(entry.replace(".cjs", ".mjs"))}).then((esm) => {
+				console.log(JSON.stringify({
+					type: typeof x,
+					same: x === esm.default && x === esm.createDroidSock,
+					aliases: ["createDroidSock", "DroidSock", "ADB", "AndroidDebugBridge"].map((n) => typeof x[n]),
+					keys: Object.keys(x)
+				}));
+			});
+		`;
+		const res = spawnSync(process.execPath, ["--conditions=droidsock-dev", "-e", script], { cwd: root, encoding: "utf8" });
+		assert.equal(res.status, 0, res.stderr);
+		assert.deepEqual(JSON.parse(res.stdout), {
+			type: "function",
+			same: true,
+			aliases: ["undefined", "undefined", "undefined", "undefined"],
+			keys: []
+		});
+	}
 });
 
 test("dist/main.mjs re-exports dist/index.mjs and warns once", () => {
