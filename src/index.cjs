@@ -14,22 +14,15 @@
  */
 
 /**
- * CommonJS entry point: a thin, synchronous re-export of the ESM entry.
- *
- * Node's `require()` loads an ES module synchronously as long as its module graph has no
- * top-level await, so this file re-exports ./index.mjs instead of a second, CommonJS build
- * of the library. tsup.config.mjs copies it verbatim to dist/index.cjs; `./index.mjs`
- * resolves to the sibling src/index.mjs in a checkout and to the build in dist/.
- *
- * The CommonJS shape is the factory itself (`module.exports = createDroidSock`), with the
- * named aliases as properties on it.
+ * @fileoverview CommonJS entry point: `require("@cldmv/droidsock")` returns the `createDroidSock` function, the one
+ * value the ESM entry exports (under `default`, `createDroidSock`, `DroidSock`, `ADB` and `AndroidDebugBridge`), so
+ * `require(x)(...)` works. It carries no alias properties; use `import { ADB } from "@cldmv/droidsock"` for the
+ * named exports. tsup.config.mjs copies this file verbatim to dist/index.cjs.
  *
  * @module droidsock
  */
 "use strict";
 
-// Node.js versions without require(esm) (before 20.19 / 22.12) would fail with a bare
-// ERR_REQUIRE_ESM, so fail early with a message that says what to do instead.
 if (!process.features?.require_module) {
 	const error = new Error(
 		`@cldmv/droidsock: require() needs Node.js >=22.15.0 (this is ${process.version}). On older Node.js, load the package with import() instead.`
@@ -38,13 +31,12 @@ if (!process.features?.require_module) {
 	throw error;
 }
 
-const { default: droidsock } = require("./index.mjs");
-
-// Export main function - the quick path, also callable with options
-module.exports = droidsock; // Default export
-module.exports.createDroidSock = droidsock;
-
-// Common DroidSock aliases
-module.exports.DroidSock = droidsock;
-module.exports.ADB = droidsock;
-module.exports.AndroidDebugBridge = droidsock;
+// Same exports as `import`. One distinct exported value (aliases of it count once) comes back as that value,
+// so require(x)(...) works; anything else comes back as the module object ({ default, ...named }).
+const esm = require("./index.mjs");
+const values = new Set(
+	Object.keys(esm)
+		.filter((key) => key !== "__esModule")
+		.map((key) => esm[key])
+);
+module.exports = values.size === 1 ? values.values().next().value : esm;

@@ -102,7 +102,7 @@ const logcat = device.logcat({
 await device.disconnect();
 ```
 
-CommonJS works the same way: `const droidsock = require("@cldmv/droidsock")` (also available as `createDroidSock`).
+CommonJS works the same way: `const droidsock = require("@cldmv/droidsock")` returns the same function, so `droidsock(...)` works directly. The `createDroidSock`, `DroidSock`, `ADB` and `AndroidDebugBridge` names are not attached to it; use `import { ADB } from "@cldmv/droidsock"` for the named exports.
 
 `@cldmv/droidsock/main` is a deprecated alias of `@cldmv/droidsock`: it exports the same functions and prints a `DeprecationWarning` (code `CLDMV_DROIDSOCK_MAIN`) once per process. Import `@cldmv/droidsock` instead; the alias is removed in the next major version.
 
