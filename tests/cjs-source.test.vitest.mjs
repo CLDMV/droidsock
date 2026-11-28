@@ -25,15 +25,16 @@ import { describe, expect, test } from "vitest";
 const require = createRequire(import.meta.url);
 
 describe("src/index.cjs", () => {
-	test("exports the factory itself, with the named aliases as properties", async () => {
+	test("exports the factory itself, with no alias properties", () => {
 		const cjs = require("../src/index.cjs");
 		// require(esm) runs under Node's own loader, so compare against the same instance of src/index.mjs.
 		const esm = require("../src/index.mjs");
 
 		expect(typeof cjs).toBe("function");
 		expect(cjs).toBe(esm.default);
+		expect(cjs).toBe(esm.createDroidSock);
 		for (const name of ["createDroidSock", "DroidSock", "ADB", "AndroidDebugBridge"]) {
-			expect(cjs[name], name).toBe(esm[name]);
+			expect(cjs[name], name).toBeUndefined();
 		}
 	});
 });
