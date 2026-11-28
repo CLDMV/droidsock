@@ -1,13 +1,13 @@
 /**
  *
  *	@Project: @cldmv/droidsock
- *	@Filename: /src/main.mjs
+ *	@Filename: src/main.mjs
  *	@Date: 2026-11-01T12:08:30-08:00 (1793563710)
  *	@Author: Nate Corcoran <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-01T12:12:57-08:00 (1793563977)
+ *	@Last modified time: 2026-11-28T09:53:41-08:00 (1795888421)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *

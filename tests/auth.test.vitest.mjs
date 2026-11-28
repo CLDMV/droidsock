@@ -1,13 +1,13 @@
 /**
  *
  *	@Project: @cldmv/droidsock
- *	@Filename: /tests/auth.test.vitest.mjs
+ *	@Filename: tests/auth.test.vitest.mjs
  *	@Date: 2026-08-30T15:58:01-07:00 (1788130681)
  *	@Author: Nate Corcoran <CLDMV>
  *	@Email: <Shinrai@users.noreply.github.com>
  *	-----
  *	@Last modified by: Nate Corcoran <CLDMV> (Shinrai@users.noreply.github.com)
- *	@Last modified time: 2026-11-07T21:59:27-08:00 (1794117567)
+ *	@Last modified time: 2026-11-28T09:53:41-08:00 (1795888421)
  *	-----
  *	@Copyright: Copyright (c) 2013-2026 Catalyzed Motivation Inc. All rights reserved.
  *
